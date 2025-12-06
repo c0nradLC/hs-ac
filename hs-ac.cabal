@@ -14,10 +14,13 @@ common warnings
 executable hs-ac
     import:           warnings
     main-is:          Main.hs
+    other-modules:    Memory
     build-depends:    
         base >=4.7 && <5
         , directory <= 1.3.6.2
         , text <1.3
         , bytestring
-    hs-source-dirs:   app
+    hs-source-dirs:
+        app
+        , src
     default-language: Haskell2010
