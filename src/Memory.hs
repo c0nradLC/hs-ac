@@ -1,10 +1,10 @@
-module Memory (writeMem, writeMemoryBytes, readProcessMemory, readMemoryValue, readInt32, readInstruction, findProcessId, getProcessModules, Module (..))
+module Memory (writeMem, readProcessMemory, readMemoryValue, readInt32, readInstruction, writeInstruction, findProcessId, getProcessModules, Module (..))
 where
 
 import qualified Data.ByteString as BS
 import Data.List (isInfixOf)
 import Data.Text (pack, split, unpack)
-import Data.Word (Word32, Word64, Word8)
+import Data.Word (Word64, Word8)
 import Foreign (
     Int32,
     Storable (peek, poke, sizeOf),
@@ -14,10 +14,10 @@ import Foreign (
 import GHC.IO.Handle (SeekMode (AbsoluteSeek), hClose, hSeek)
 import GHC.IO.Handle.FD (openBinaryFile)
 import GHC.IO.IOMode (IOMode (ReadMode, WriteMode))
-import Numeric (readHex, showHex)
+import Numeric (readHex)
 import System.Directory (doesFileExist, getDirectoryContents)
 
-writeMem :: FilePath -> Word64 -> Word32 -> IO ()
+writeMem :: FilePath -> Word64 -> Word64 -> IO ()
 writeMem memPath addr val = do
     bytes <- allocaBytes (sizeOf val) $ \ptr -> do
         poke ptr val
@@ -30,7 +30,7 @@ writeMem memPath addr val = do
     hClose handle
     return ()
 
-writeMemoryBytes :: Int -> Word64 -> [Word8] -> IO Bool
+writeMemoryBytes :: Int -> Word64 -> [Word8] -> IO ()
 writeMemoryBytes pid address bytes = do
     let memPath = "/proc/" ++ show pid ++ "/mem"
     let byteString = BS.pack bytes
@@ -39,14 +39,13 @@ writeMemoryBytes pid address bytes = do
     hSeek handle AbsoluteSeek (fromIntegral address)
     BS.hPut handle byteString
     hClose handle
-    return True
 
 -- Read from process memory via /proc/<pid>/mem
 readProcessMemory :: Int -> Word64 -> Int -> IO (Maybe BS.ByteString)
 readProcessMemory pid address size = do
     let memPath = "/proc/" ++ show pid ++ "/mem"
 
-    -- Check if file exists and we can read it
+    -- Check if file exists
     exists <- doesFileExist memPath
     if not exists
         then return Nothing
@@ -83,19 +82,8 @@ byteStringToValue bs =
     BS.useAsCString bs $ \cstr ->
         peek (castPtr cstr)
 
-readInstructionBytes :: Int -> Word64 -> Int -> IO (Maybe BS.ByteString)
-readInstructionBytes pid address instructionSize = do
-    readProcessMemory pid address instructionSize
-
 readInt32 :: Int -> Word64 -> IO (Maybe Int32)
 readInt32 = readMemoryValue
-
-readInstruction :: Int -> Word64 -> Int -> IO (Either String BS.ByteString)
-readInstruction pid address size = do
-    mbInstruction <- readInstructionBytes pid address size
-    case mbInstruction of
-        Just instr -> return (Right instr)
-        Nothing -> return (Left $ "Failed to read instruction at address 0x" ++ showHex address "")
 
 -- Find PID by name
 findProcessId :: String -> IO (Maybe Int)
@@ -113,6 +101,32 @@ findProcessId processName = do
                 content <- readFile commPath
                 return $ processName `isInfixOf` content
             else return False
+
+
+
+-- Read instruction as ByteString
+readInstruction :: Int -> Word64 -> Int -> IO (Maybe BS.ByteString)
+readInstruction pid address size = do
+    mbBytes <- readProcessMemory pid address size
+    case mbBytes of
+        Just bytes -> do
+            -- Verify we got the right amount
+            if BS.length bytes == size
+                then return (Just bytes)
+                else do
+                    putStrLn $ "Warning: Read " ++ show (BS.length bytes) ++ 
+                             " bytes, expected " ++ show size
+                    return Nothing
+        Nothing -> return Nothing
+
+-- Write instruction from ByteString
+writeInstruction :: Int -> Word64 -> BS.ByteString -> IO ()
+writeInstruction pid address bytes = do
+    writeMemoryBytes pid address (BS.unpack bytes)
+
+
+
+-- remove what's below this line and move it to main, it's only called one time, no real need to have it as a function
 
 getProcessModules :: FilePath -> IO [Module]
 getProcessModules fp = do
