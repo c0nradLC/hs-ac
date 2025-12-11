@@ -24,11 +24,29 @@ main = do
                 Nothing -> do
                     error "Game/Binary module not found."
             let playerEntityPointer = gameModuleBaseAddr + (fst . head $ readHex "19d518")
+            let playerListPointer = gameModuleBaseAddr + (fst . head $ readHex "19d520")
+            let maxPlayersPointer = gameModuleBaseAddr + (fst . head $ readHex "19d52C")
             let ammoInstrAddr = gameModuleBaseAddr + (fst . head $ readHex "fd06e")
             let recoilInstrAddr = gameModuleBaseAddr + (fst . head $ readHex "77a9c")
-
             -- Need to revisit how the knockback works, it might not be this, maybe instead of NOP we need to patch it differently
-            let knockbackInstrAddr = gameModuleBaseAddr + (fst . head $ readHex "fcf6d")
+            -- let knockbackInstrAddr = gameModuleBaseAddr + (fst . head $ readHex "fcf6d")
+
+            mMaxPlayersAddr <- Mem.readInt32 pid maxPlayersPointer
+            case mMaxPlayersAddr of
+                Just maxPlayersAddr -> do
+                        print $ "Max players: " ++ show (showHex maxPlayersAddr "")
+                Nothing -> return ()
+
+            print $ "Player entity pointer: " ++ show (showHex playerEntityPointer "")
+            print $ "Player list pointer: " ++ show (showHex playerListPointer "")
+
+            mPlayersListAddress <- Mem.readAddress pid playerListPointer
+            case mPlayersListAddress of
+                Just playersListAddr -> do
+                        putStrLn ""
+                        print $ "TEST Players list address: " ++ show (showHex playersListAddr "")
+                        putStrLn ""
+                Nothing -> do return ()
 
             mPlayerEntityAddress <- Mem.readAddress pid playerEntityPointer
             case mPlayerEntityAddress of
@@ -60,7 +78,6 @@ main = do
 
             print $ "Ammo instr address: " ++ show (showHex ammoInstrAddr "")
             print $ "Recoil instr address: " ++ show (showHex recoilInstrAddr "")
-            print $ "(maybe) Knockback instr address: " ++ show (showHex knockbackInstrAddr "")
 
             putStrLn ""
 
