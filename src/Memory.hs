@@ -1,4 +1,4 @@
-module Memory (writeMem, readProcessMemory, readMemoryValue, readInt32, readInstruction, writeInstruction, readAddress, findProcessId, getProcessModules, Module (..))
+module Memory (writeMem, readProcessMemory, readMemoryValue, readInt32, readVec3, readInstruction, writeInstruction, readAddress, findProcessId, getProcessModules, Module (..))
 where
 
 import qualified Data.ByteString as BS
@@ -16,7 +16,6 @@ import GHC.IO.Handle.FD (openBinaryFile)
 import GHC.IO.IOMode (IOMode (ReadMode, WriteMode))
 import Numeric (readHex)
 import System.Directory (doesFileExist, getDirectoryContents)
-import Control.Monad (foldM)
 
 writeMem :: FilePath -> Word64 -> Word64 -> IO ()
 writeMem memPath addr val = do
@@ -85,9 +84,23 @@ readMemoryValue pid address = do
 readInt32 :: Int -> Word64 -> IO (Maybe Int32)
 readInt32 = readMemoryValue
 
+-- Read a float value
+readFloat :: Int -> Word64 -> IO (Maybe Float)
+readFloat = readMemoryValue
+
 -- Read an Adress (hex) value
 readAddress :: Int -> Word64 -> IO (Maybe Word64)
 readAddress = readMemoryValue
+
+-- Read three floats in sequence, representing an x, y, z position
+readVec3 :: Int -> Word64 -> IO (Maybe (Float, Float, Float))
+readVec3 pid addr = do
+    mbX <- readFloat pid addr
+    mbY <- readFloat pid (addr + 4)
+    mbZ <- readFloat pid (addr + 8)
+    case (mbX, mbY, mbZ) of
+        (Just x, Just y, Just z) -> return $ Just (x, y, z)
+        _ -> return Nothing
 
 -- Find PID by name
 findProcessId :: String -> IO (Maybe Int)
@@ -127,29 +140,6 @@ readInstruction pid address size = do
 writeInstruction :: Int -> Word64 -> BS.ByteString -> IO ()
 writeInstruction pid address bytes = do
     writeMemoryBytes pid address (BS.unpack bytes)
-
--- Dereference pointer chain
-dereferencePointerChain :: Int -> Word64 -> [Word64] -> IO (Maybe Word64)
-dereferencePointerChain pid basePtr offsets =
-    foldM derefSingle (Just basePtr) offsets
-  where
-    derefSingle mbCurrentPtr offset = do
-        case mbCurrentPtr of
-            Just currentPtr -> do
-                mbNextPtr <- readAddress pid (currentPtr + offset)
-                return $ case mbNextPtr of
-                    Just 0 -> Nothing
-                    ptr -> ptr
-            Nothing -> return Nothing
-
--- Read value through pointer chain
-readThroughPointer :: Int -> Word64 -> [Word64] -> IO (Maybe Word64)
-readThroughPointer pid basePtr offsets = do
-    mbFinalAddr <- dereferencePointerChain pid basePtr offsets
-    case mbFinalAddr of
-        Just addr -> readMemoryValue pid addr
-        Nothing -> return Nothing
-
 
 -- remove what's below this line and move it to main, it's only called one time, no real need to have it as a function
 

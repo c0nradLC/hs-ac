@@ -35,49 +35,52 @@ main = do
             case mMaxPlayersAddr of
                 Just maxPlayersAddr -> do
                         print $ "Max players: " ++ show (showHex maxPlayersAddr "")
+
+                        mPlayersListAddress <- Mem.readAddress pid playerListPointer
+                        case mPlayersListAddress of
+                            Just playersListAddr -> do
+                                let firstBot = fstBotAddress playersListAddr
+                                let secondBot = sndBotAddress playersListAddr
+
+
+                            Nothing -> do return ()
                 Nothing -> return ()
 
             print $ "Player entity pointer: " ++ show (showHex playerEntityPointer "")
             print $ "Player list pointer: " ++ show (showHex playerListPointer "")
 
-            mPlayersListAddress <- Mem.readAddress pid playerListPointer
-            case mPlayersListAddress of
-                Just playersListAddr -> do
-                        putStrLn ""
-                        print $ "TEST Players list address: " ++ show (showHex playersListAddr "")
-                        putStrLn ""
-                Nothing -> do return ()
-
             mPlayerEntityAddress <- Mem.readAddress pid playerEntityPointer
             case mPlayerEntityAddress of
-                    Just playerEntityAddr -> do 
-                        print $ "Player entity address: " ++ show (showHex playerEntityAddr "")
-                        let healthAddr = playerEntityAddr + (fst . head $ readHex "100")
-                        let ammoAddr = playerEntityAddr + (fst . head $ readHex "154")
-                        let playerAimYAddr = playerEntityAddr + (fst . head $ readHex "3C")
+                Just playerEntityAddr -> do 
+                    print $ "Player entity address: " ++ show (showHex playerEntityAddr "")
+                    let healthAddr = playerEntityAddr + (fst . head $ readHex "100")
+                    let ammoAddr = playerEntityAddr + (fst . head $ readHex "154")
+                    let playerAimYAddr = playerEntityAddr + (fst . head $ readHex "3C")
+                    let playerPosAddr = playerEntityAddr + (fst . head $ readHex "8")
+                    
+                    mPlayerPos <- Mem.readVec3 pid playerPosAddr
+                    print $ "Player position: " ++ show mPlayerPos
+                    
 
-                        print $ "Player Aim Y axis address: " ++ show (showHex playerAimYAddr "")
-                        print $ "Primary ammo address: " ++ show (showHex ammoAddr "")
-                        print $ "Health address: " ++ show (showHex healthAddr "")
+                    -- Set primary ammo
+                    Mem.writeMem memPath ammoAddr 1337
+                    test1 <- Mem.readInt32 pid ammoAddr
+                    --print $ "AmmoAddr val: " ++ show test1
 
-                        -- Set primary ammo
-                        Mem.writeMem memPath ammoAddr 1337
-                        test1 <- Mem.readInt32 pid ammoAddr
-                        print $ "AmmoAddr val: " ++ show test1
+                    -- Set health
+                    Mem.writeMem memPath healthAddr 1337
+                    test2 <- Mem.readInt32 pid healthAddr
+                    --print $ "HealthAddr val: " ++ show test2
+                    return ()
 
-                        -- Set health
-                        Mem.writeMem memPath healthAddr 1337
-                        test2 <- Mem.readInt32 pid healthAddr
-                        print $ "HealthAddr val: " ++ show test2
-
-                    Nothing -> return ()
+                Nothing -> return ()
 
             print $ "PID: " ++ show pid
 
-            print $ "Binary base addr: " ++ show (showHex gameModuleBaseAddr "")
+            --print $ "Binary base addr: " ++ show (showHex gameModuleBaseAddr "")
 
-            print $ "Ammo instr address: " ++ show (showHex ammoInstrAddr "")
-            print $ "Recoil instr address: " ++ show (showHex recoilInstrAddr "")
+            --print $ "Ammo instr address: " ++ show (showHex ammoInstrAddr "")
+            --print $ "Recoil instr address: " ++ show (showHex recoilInstrAddr "")
 
             putStrLn ""
 
@@ -102,3 +105,13 @@ main = do
         Nothing -> do
             print "pid not found."
             return ()
+
+
+fstBotAddress :: Word64 -> Word64
+fstBotAddress playerListAddress = playerListAddress + (fst . head $ readHex "8")
+
+sndBotAddress :: Word64 -> Word64
+sndBotAddress playerListAddress = playerListAddress + (fst . head $ readHex "10")
+
+nextBotAddress :: Word64 -> Word64
+nextBotAddress currentAddress = currentAddress + (fst . head $ readHex "10")
