@@ -16,12 +16,34 @@ executable hs-ac
     main-is:          Main.hs
     other-modules:    Memory
                     , GameLoop
+                    , GLHook
     build-depends:    
         base >=4.7 && <5
         , directory <= 1.3.6.2
         , text <1.3
         , bytestring
+        , unix
     hs-source-dirs:
         app
         , src
+    default-language: Haskell2010
+
+library
+    import: warnings
+    exposed-modules:  GLHook
+                    , Memory
+    ghc-options:       
+      -shared
+      -fPIC
+      -dynamic
+      -no-hs-main
+      -optl-W
+      -ldl
+    build-depends:    
+        base >=4.7 && <5
+        , directory <= 1.3.6.2
+        , text <1.3
+        , bytestring
+        , unix
+    hs-source-dirs: src
     default-language: Haskell2010

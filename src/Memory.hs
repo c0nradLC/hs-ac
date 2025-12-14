@@ -1,4 +1,4 @@
-module Memory (writeMem, readProcessMemory, readMemoryValue, readInt32, readVec3, readInstruction, writeInstruction, readAddress, findProcessId, getProcessModules, Module (..))
+module Memory (writeMem, readProcessMemory, readMemoryValue, readInt32, readVec3, readString, readInstruction, writeInstruction, readAddress, findProcessId, getProcessModules, Module (..))
 where
 
 import qualified Data.ByteString as BS
@@ -91,6 +91,10 @@ readFloat = readMemoryValue
 -- Read an Adress (hex) value
 readAddress :: Int -> Word64 -> IO (Maybe Word64)
 readAddress = readMemoryValue
+
+-- Read string
+readString :: Int -> Word64 -> Int -> IO (Maybe BS.ByteString)
+readString = readProcessMemory
 
 -- Read three floats in sequence, representing an x, y, z position
 readVec3 :: Int -> Word64 -> IO (Maybe (Float, Float, Float))
