@@ -57,60 +57,59 @@ main = do
 
             mPlayerEntityAddress <- Mem.readAddress pid playerEntityPointer
             case mPlayerEntityAddress of
-                    Just playerEntityAddr -> do 
-                        print $ "Player entity address: " ++ show (showHex playerEntityAddr "")
-                        let healthAddr = playerEntityAddr + (fst . head $ readHex "100")
-                        let ammoAddr = playerEntityAddr + (fst . head $ readHex "154")
-                        let playerAimYAddr = playerEntityAddr + (fst . head $ readHex "3C")
-                        let playerPosAddr = playerEntityAddr + (fst . head $ readHex "8")
-                        
-                        mPlayerPos <- Mem.readVec3 pid playerPosAddr
-                        print $ "Player position: " ++ show mPlayerPos
-                        
-                        -- Set primary ammo
-                        Mem.writeMem memPath ammoAddr 1337
-                        test1 <- Mem.readInt32 pid ammoAddr
-                        --print $ "AmmoAddr val: " ++ show test1
+                Just playerEntityAddr -> do 
+                    print $ "Player entity address: " ++ show (showHex playerEntityAddr "")
+                    let healthAddr = playerEntityAddr + (fst . head $ readHex "100")
+                    let ammoAddr = playerEntityAddr + (fst . head $ readHex "154")
+                    let playerAimYAddr = playerEntityAddr + (fst . head $ readHex "3C")
+                    let playerPosAddr = playerEntityAddr + (fst . head $ readHex "8")
+                    
+                    mPlayerPos <- Mem.readVec3 pid playerPosAddr
+                    print $ "Player position: " ++ show mPlayerPos
+                    
+                    -- Set primary ammo
+                    Mem.writeMem memPath ammoAddr 1337
+                    test1 <- Mem.readInt32 pid ammoAddr
+                    --print $ "AmmoAddr val: " ++ show test1
 
-                        -- Set health
-                        Mem.writeMem memPath healthAddr 1337
-                        test2 <- Mem.readInt32 pid healthAddr
-                        --print $ "HealthAddr val: " ++ show test2
+                    -- Set health
+                    Mem.writeMem memPath healthAddr 1337
+                    test2 <- Mem.readInt32 pid healthAddr
+                    --print $ "HealthAddr val: " ++ show test2
 
-                        forever $ do
-                            mMaxPlayers <- Mem.readInt32 pid maxPlayersAddress
+                    forever $ do
+                        mMaxPlayers <- Mem.readInt32 pid maxPlayersAddress
 
-                            playerState <- Mem.readInt32 pid (playerEntityAddr + playerStateOffset)
-                            playerPos <- Mem.readVec3 pid (playerEntityAddr + playerPosOffset)
-                            playerTeam <- Mem.readInt32 pid (playerEntityAddr + playerTeamOffset)
+                        playerState <- Mem.readInt32 pid (playerEntityAddr + playerStateOffset)
+                        playerPos <- Mem.readVec3 pid (playerEntityAddr + playerPosOffset)
+                        playerTeam <- Mem.readInt32 pid (playerEntityAddr + playerTeamOffset)
 
-                            let localPlayer = Player {_pos = playerPos, _state = playerState, _team = playerTeam}
-                            case mMaxPlayers of
-                                Just maxPlayers -> do
-                                    mPlayersListAddress <- Mem.readAddress pid playerListPointer
-                                    case mPlayersListAddress of
-                                        Just playersListAddr -> do
-                                            let firstBotAddress = playersListAddr + (fst . head $ readHex "8")
-                                            let sndBotAddress = playersListAddr + (fst . head $ readHex "10")
-                                            let botPointersTest = getBotsPointers firstBotAddress sndBotAddress maxPlayers
+                        let localPlayer = Player {_pos = playerPos, _state = playerState, _team = playerTeam}
+                        case mMaxPlayers of
+                            Just maxPlayers -> do
+                                mPlayersListAddress <- Mem.readAddress pid playerListPointer
+                                case mPlayersListAddress of
+                                    Just playersListAddr -> do
+                                        let firstBotAddress = playersListAddr + (fst . head $ readHex "8")
+                                        let sndBotAddress = playersListAddr + (fst . head $ readHex "10")
+                                        let botPointersTest = getBotsPointers firstBotAddress sndBotAddress maxPlayers
 
-                                            mapM_ (\botPointer -> do
-                                                    mBotAddress <- Mem.readAddress pid botPointer
-                                                    case mBotAddress of 
-                                                        Just botAddress -> do
-                                                            botState <- Mem.readInt32 pid (botAddress + playerStateOffset)
-                                                            botPos <- Mem.readVec3 pid (botAddress + playerPosOffset)
-                                                            botTeam <- Mem.readInt32 pid (botAddress + playerTeamOffset)
+                                        mapM_ (\botPointer -> do
+                                                mBotAddress <- Mem.readAddress pid botPointer
+                                                case mBotAddress of 
+                                                    Just botAddress -> do
+                                                        botState <- Mem.readInt32 pid (botAddress + playerStateOffset)
+                                                        botPos <- Mem.readVec3 pid (botAddress + playerPosOffset)
+                                                        botTeam <- Mem.readInt32 pid (botAddress + playerTeamOffset)
 
-                                                            let bot = Player {_pos = botPos, _state = botState, _team = botTeam}
-                                                            print $ show bot
-                                                            return ()
-                                                        Nothing -> return ()
-                                                    ) botPointersTest
-                                        Nothing -> return ()
-                                Nothing -> return ()
-                            threadDelay 16666
-                    Nothing -> return()
+                                                        let bot = Player {_pos = botPos, _state = botState, _team = botTeam}
+                                                        print $ show bot
+                                                        return ()
+                                                    Nothing -> return ()
+                                                ) botPointersTest
+                                    Nothing -> return ()
+                            Nothing -> return ()
+                Nothing -> return()
         Nothing -> do
             print "pid not found."
 
