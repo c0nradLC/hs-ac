@@ -79,12 +79,12 @@ sdlGLSwapWindowHook _ = do
             
             -- Set primary ammo
             Mem.writeMem memPath ammoAddr 1337
-            test1 <- Mem.readInt32 pid ammoAddr
+            --test1 <- Mem.readInt32 pid ammoAddr
             --print $ "AmmoAddr val: " ++ show test1
 
             -- Set health
             Mem.writeMem memPath healthAddr 1337
-            test2 <- Mem.readInt32 pid healthAddr
+            --test2 <- Mem.readInt32 pid healthAddr
             --print $ "HealthAddr val: " ++ show test2
 
             mMaxPlayers <- Mem.readInt32 pid maxPlayersAddress

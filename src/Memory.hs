@@ -1,4 +1,4 @@
-module Memory (writeMem, readProcessMemory, readMemoryValue, readInt32, readVec3, readString, readInstruction, writeInstruction, readAddress, findProcessId, getProcessModules, Module (..))
+module Memory (writeMem, writeFloat, readFloat, readProcessMemory, readMemoryValue, readInt32, readVec3, readString, readInstruction, writeInstruction, readAddress, findProcessId, getProcessModules, Module (..))
 where
 
 import qualified Data.ByteString as BS
@@ -29,6 +29,20 @@ writeMem memPath addr val = do
     BS.hPut handle bytes
     hClose handle
     return ()
+
+writeFloat :: FilePath -> Word64 -> Float -> IO ()
+writeFloat memPath addr val = do
+    bytes <- allocaBytes (sizeOf val) $ \ptr -> do
+        poke ptr val
+        BS.packCStringLen (castPtr ptr, sizeOf val)
+    handle <- openBinaryFile memPath WriteMode
+
+    hSeek handle AbsoluteSeek (fromIntegral addr)
+
+    BS.hPut handle bytes
+    hClose handle
+    return ()
+
 
 writeMemoryBytes :: Int -> Word64 -> [Word8] -> IO ()
 writeMemoryBytes pid address bytes = do
