@@ -44,6 +44,7 @@ main = do
                     let test = gameModuleBaseAddr + (fst .head $ readHex "1AEDA0")
 
                     forever $ do
+                        print $ "Player entity: " ++ show (showHex playerEntityAddr "")
                         mMaxPlayers <- Mem.readInt32 pid maxPlayersAddress
                         mPlayerState <- Mem.readInt32 pid (playerEntityAddr + playerStateOffset)
                         mPlayerPos <- Mem.readVec3 pid (playerEntityAddr + playerPosOffset)
@@ -125,6 +126,8 @@ getDistance (deltaX, deltaY) = sqrt ((deltaX * deltaX) + (deltaY * deltaY))
 getDeltas :: (Float, Float, Float) -> (Float, Float, Float) -> (Float, Float, Float)
 getDeltas (playerX, playerY, playerZ) (botX, botY, botZ) = (botX - playerX, botY - playerY, botZ - playerZ)
 
+
+
 getClosestBot :: [Maybe Player] -> Maybe Player
 getClosestBot ms =
   let candidates = [(p, d) | Just p <- ms, Just d <- [_distance p]]
@@ -144,6 +147,7 @@ playerPosOffset = fst . head $ readHex "8"
 
 playerNameOffset :: Word64
 playerNameOffset = fst . head $ readHex "219"
+
 
 data Player
     = Player

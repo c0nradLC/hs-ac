@@ -1,4 +1,5 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module GLHook where
 
@@ -21,14 +22,13 @@ import Data.Word
 import GHC.Int (Int32)
 import Numeric (readHex, showHex)
 import Data.Ord (comparing)
-import Data.Maybe (fromMaybe)
-import qualified Graphics.Rendering.OpenGL as GL
-import Graphics.Rendering.OpenGL (get)
+import Data.Maybe (fromMaybe, catMaybes, isJust, fromJust)
+import Graphics.Rendering.OpenGL (Size(..), matrixMode, loadIdentity, HasSetter (($=)), MatrixMode (Modelview, Projection), ortho, HasGetter (get), viewport, GLdouble, lineWidth, depthMask, ComparisonFunction (Less, Always), Capability (Enabled, Disabled), depthFunc, Color (color), Color4 (Color4), renderPrimitive, PrimitiveMode (LineLoop), Vertex2 (Vertex2), Vertex (vertex), preservingMatrix, BlendingFactor (SrcAlpha, OneMinusSrcAlpha), blendFunc, GLfloat, TextureFunction (Blend), blend)
 
 -- SDL2 Window type (opaque pointer)
 type SDL_Window = Ptr ()
 
--- Our hook for SDL_GL_SwapWindow
+-- Our hook for SDL_SwapWindow
 foreign export ccall "sdlGLSwapWindowHook" sdlGLSwapWindowHook :: SDL_Window -> IO ()
 
 sdlGLSwapWindowHook :: SDL_Window -> IO ()
@@ -44,12 +44,6 @@ sdlGLSwapWindowHook _ = do
             return $ Mem._baseAddr gameModule
         Nothing -> do
             error "Game/Binary module not found."
-
-    GL.matrixMode GL.$= GL.Projection
-    GL.loadIdentity
-
-    test <- get GL.viewport
-    print $ show test
 
     let playerEntityPointer = gameModuleBaseAddr + (fst . head $ readHex "19d518")
     let playerListPointer = gameModuleBaseAddr + (fst . head $ readHex "19d520")
@@ -78,15 +72,13 @@ sdlGLSwapWindowHook _ = do
 
     mPlayerEntityAddress <- Mem.readAddress pid playerEntityPointer
     case mPlayerEntityAddress of
-        Just playerEntityAddr -> do 
+        Just playerEntityAddr -> do
             let healthAddr = playerEntityAddr + (fst . head $ readHex "100")
             let ammoAddr = playerEntityAddr + (fst . head $ readHex "154")
             let playerPosAddr = playerEntityAddr + (fst . head $ readHex "8")
             let playerAimYAddr = playerEntityAddr + (fst . head $ readHex "3C")
             let playerAimXAddr = playerEntityAddr + (fst . head $ readHex "38")
-            
-            mPlayerPos <- Mem.readVec3 pid playerPosAddr
-            
+
             -- Set primary ammo
             Mem.writeMem memPath ammoAddr 1337
             --test1 <- Mem.readInt32 pid ammoAddr
@@ -99,7 +91,7 @@ sdlGLSwapWindowHook _ = do
 
             mMaxPlayers <- Mem.readInt32 pid maxPlayersAddress
             mPlayerState <- Mem.readInt32 pid (playerEntityAddr + playerStateOffset)
-            mPlayerPos <- Mem.readVec3 pid (playerEntityAddr + playerPosOffset)
+            mPlayerPos <- Mem.readVec3 pid playerPosAddr
             mPlayerTeam <- Mem.readInt32 pid (playerEntityAddr + playerTeamOffset)
 
             let playerState = fromMaybe 3 mPlayerState
@@ -146,15 +138,22 @@ sdlGLSwapWindowHook _ = do
                                     Mem.writeFloat memPath playerAimXAddr aimX
                                     return ()
                                 Nothing -> return ()
+                            aimX <- Mem.readFloat pid playerAimXAddr
+                            aimY <- Mem.readFloat pid playerAimYAddr
+                            drawESP
+                                (_pos localPlayer)
+                                (fromMaybe 0.0 aimX)
+                                (fromMaybe 0.0 aimY)
+                                (catMaybes bots)
                             return ()
                         Nothing -> return ()
                 Nothing -> return ()
-        Nothing -> return()
-    
+        Nothing -> return ()
+
     return ()
 
 -- Function pointer callers
-foreign import ccall "dynamic" 
+foreign import ccall "dynamic"
     callSwapWindow :: FunPtr (SDL_Window -> IO ()) -> SDL_Window -> IO ()
 
 getBotsPointers :: Word64 -> Word64 -> Int32 -> [Word64]
@@ -181,6 +180,124 @@ getDistance (deltaX, deltaY) = sqrt ((deltaX * deltaX) + (deltaY * deltaY))
 
 getDeltas :: (Float, Float, Float) -> (Float, Float, Float) -> (Float, Float, Float)
 getDeltas (playerX, playerY, playerZ) (botX, botY, botZ) = (botX - playerX, botY - playerY, botZ - playerZ)
+
+degToRad :: Float -> Float
+degToRad deg = deg * pi / 180.0
+
+normalizeDelta :: Float -> Float
+normalizeDelta ang
+  | ang <= -pi = normalizeDelta (ang + 2 * pi)
+  | ang > pi   = normalizeDelta (ang - 2 * pi)
+  | otherwise  = ang
+
+worldToScreen :: (Float, Float, Float) -> Float -> Float -> Float -> Float -> (Float, Float, Float) -> Maybe (Float, Float)
+worldToScreen camPos camYawDeg camPitchDeg screenW screenH enemyPos =
+  let (deltaX, deltaY, deltaZ) = getDeltas camPos enemyPos
+      horizDist = getDistance (deltaX, deltaY)
+  in if horizDist < 0.01
+     then Nothing
+     else let yawToRad = atan2 deltaX (-deltaY)
+              pitchToRad = atan2 deltaZ horizDist
+              camYawRad = degToRad camYawDeg
+              camPitchRad = degToRad camPitchDeg
+              deltaYaw = normalizeDelta (yawToRad - camYawRad)
+              deltaPitch = normalizeDelta (pitchToRad - camPitchRad)
+              dotProd = cos deltaYaw * cos deltaPitch
+          in if dotProd < 0 || abs deltaYaw > pi / 1.8 || abs deltaPitch > pi / 1.8
+             then Nothing
+             else let halfHfovRad = degToRad (90 / 2)
+                      aspectRatio = screenH / screenW
+                      halfVfovRad = atan (tan halfHfovRad * aspectRatio)
+                      screenX = screenW / 2 + (screenW / 2) * (tan deltaYaw / tan halfHfovRad)
+                      screenY = screenH / 2 - (screenH / 2) * (tan deltaPitch / tan halfVfovRad)
+                  in if screenX < -100 || screenX > screenW + 100 || screenY < -100 || screenY > screenH + 100
+                     then Nothing
+                     else Just (screenX, screenY)
+
+-- Draw box on bot
+drawEnemyBox :: (Float, Float) -> (Float, Float) -> IO ()
+drawEnemyBox foot head = do
+  let fx = fst foot
+      fy = snd foot
+      hx = fst head
+      hy = snd head
+      boxHeight = abs (hy - fy)
+      boxWidth = boxHeight * 0.45
+      left = (fx + hx) / 2 - boxWidth / 2
+      right = left + boxWidth
+      bottom = fy
+      top = hy
+  color $ Color4 1 0 0 (0.8 :: Float)
+  renderPrimitive LineLoop $ do
+    vertex $ Vertex2 left bottom
+    vertex $ Vertex2 right bottom
+    vertex $ Vertex2 right top
+    vertex $ Vertex2 left top
+
+-- Draw box on bot
+drawEnemyBoxNew :: (Float, Float) -> IO ()
+drawEnemyBoxNew pos = do
+  let fx = fst pos
+      fy = snd pos
+      hx = fst pos
+      hy = snd pos
+      boxHeight = abs (hy - fy)
+      boxWidth = boxHeight * 0.45
+      left = (fx + hx) / 2 - boxWidth / 2
+      right = left + boxWidth
+      bottom = fy
+      top = hy
+  color $ Color4 1 0 0 (0.8 :: Float)
+  renderPrimitive LineLoop $ do
+    vertex $ Vertex2 left bottom
+    vertex $ Vertex2 right bottom
+    vertex $ Vertex2 right top
+    vertex $ Vertex2 left top
+
+drawESP :: (Float, Float, Float) -> Float -> Float -> [Player] -> IO ()
+drawESP camPos camYaw camPitch enemies =
+    preservingMatrix $ do
+
+    -- Get current viewport (Position/Size)
+    vp <- get viewport
+    let (_, Size vw vh) = vp  -- Ignore Position x/y (0,0)
+        projectedEnemies = do
+            enemy <- enemies
+            let mfoot = worldToScreen camPos camYaw camPitch (realToFrac vw) (realToFrac vh) (_pos enemy)
+                (enemyX, enemyY, enemyZ) = _pos enemy
+                mhead = worldToScreen camPos camYaw camPitch (realToFrac vw) (realToFrac vh) (enemyX, enemyY, enemyZ - 4.5)
+            guard (isJust mfoot && isJust mhead)
+            let foot = fromJust mfoot
+                head = fromJust mhead
+            pure (foot, head)
+
+    -- 2D overlay setup
+    matrixMode $= Projection
+    loadIdentity
+    ortho 0 (realToFrac vw) (realToFrac vh) 0 (-1) 1
+
+    matrixMode $= Modelview 0
+    loadIdentity
+
+    -- Overlay states
+    depthFunc $= Just Always
+    blend $= Enabled
+    blendFunc $= (SrcAlpha, OneMinusSrcAlpha)
+    lineWidth $= 2.0
+
+    -- Draw all boxes
+    --mapM_ (\bot -> do
+    --        let (botX, botY) = fromMaybe (0, 0) (worldToScreen camPos camYaw camPitch (realToFrac vw) (realToFrac vh) (_pos bot))
+    --        drawEnemyBoxNew (botX, botY))
+    --    enemies
+
+    mapM_ (uncurry drawEnemyBox) projectedEnemies
+
+    -- Restore states
+    depthFunc $= Just Less
+    blend $= Disabled
+    lineWidth $= 1.0
+    matrixMode $= Modelview 0
 
 getClosestBot :: [Maybe Player] -> Maybe Player
 getClosestBot ms =
