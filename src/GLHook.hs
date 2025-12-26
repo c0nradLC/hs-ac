@@ -3,27 +3,17 @@
 
 module GLHook where
 
-import Foreign.C
 import Foreign.Ptr
-import Foreign.C.String
 import System.Posix.Process
-import System.Posix.Files
-import System.Directory
-import Control.Monad
-import Data.IORef
-import System.IO
-import System.IO.Unsafe
-import Data.List (isInfixOf, find, minimumBy)
-import Control.Concurrent
-import System.Posix.DynamicLinker
+import Data.List (find, minimumBy)
 import qualified Memory as Mem
 import qualified Data.ByteString as BS
 import Data.Word
 import GHC.Int (Int32)
-import Numeric (readHex, showHex)
+import Numeric (readHex)
 import Data.Ord (comparing)
-import Data.Maybe (fromMaybe, catMaybes, isJust, fromJust)
-import Graphics.Rendering.OpenGL (Size(..), matrixMode, loadIdentity, HasSetter (($=)), MatrixMode (Modelview, Projection), ortho, HasGetter (get), viewport, GLdouble, lineWidth, depthMask, ComparisonFunction (Less, Always), Capability (Enabled, Disabled), depthFunc, Color (color), Color4 (Color4), renderPrimitive, PrimitiveMode (LineLoop), Vertex2 (Vertex2), Vertex (vertex), preservingMatrix, BlendingFactor (SrcAlpha, OneMinusSrcAlpha), blendFunc, GLfloat, TextureFunction (Blend), blend)
+import Data.Maybe (fromMaybe, catMaybes)
+import Graphics.Rendering.OpenGL (Size(..), matrixMode, loadIdentity, HasSetter (($=)), MatrixMode (Modelview, Projection), ortho, HasGetter (get), viewport, lineWidth, ComparisonFunction (Less, Always), Capability (Enabled, Disabled), depthFunc, Color (color), Color4 (Color4), renderPrimitive, PrimitiveMode (LineLoop), Vertex2 (Vertex2), Vertex (vertex), preservingMatrix, BlendingFactor (SrcAlpha, OneMinusSrcAlpha), blendFunc, blend)
 
 -- SDL2 Window type (opaque pointer)
 type SDL_Window = Ptr ()
@@ -39,7 +29,7 @@ sdlGLSwapWindowHook _ = do
         procPath = "/proc/" ++ show pid
         memPath = procPath ++ "/mem"
     modules <- Mem.getProcessModules $ procPath ++ "/maps"
-    gameModuleBaseAddr <- case find (\mod -> Mem._name mod == "linux_64_client") modules of
+    gameModuleBaseAddr <- case find (\modl -> Mem._name modl == "linux_64_client") modules of
         Just gameModule -> do
             return $ Mem._baseAddr gameModule
         Nothing -> do
@@ -190,86 +180,54 @@ normalizeDelta ang
   | ang > pi   = normalizeDelta (ang - 2 * pi)
   | otherwise  = ang
 
-worldToScreen :: (Float, Float, Float) -> Float -> Float -> Float -> Float -> (Float, Float, Float) -> Maybe (Float, Float)
-worldToScreen camPos camYawDeg camPitchDeg screenW screenH enemyPos =
-  let (deltaX, deltaY, deltaZ) = getDeltas camPos enemyPos
-      horizDist = getDistance (deltaX, deltaY)
-  in if horizDist < 0.01
-     then Nothing
-     else let yawToRad = atan2 deltaX (-deltaY)
-              pitchToRad = atan2 deltaZ horizDist
-              camYawRad = degToRad camYawDeg
-              camPitchRad = degToRad camPitchDeg
-              deltaYaw = normalizeDelta (yawToRad - camYawRad)
-              deltaPitch = normalizeDelta (pitchToRad - camPitchRad)
-              dotProd = cos deltaYaw * cos deltaPitch
-          in if dotProd < 0 || abs deltaYaw > pi / 1.8 || abs deltaPitch > pi / 1.8
-             then Nothing
-             else let halfHfovRad = degToRad (90 / 2)
-                      aspectRatio = screenH / screenW
-                      halfVfovRad = atan (tan halfHfovRad * aspectRatio)
-                      screenX = screenW / 2 + (screenW / 2) * (tan deltaYaw / tan halfHfovRad)
-                      screenY = screenH / 2 - (screenH / 2) * (tan deltaPitch / tan halfVfovRad)
-                  in if screenX < -100 || screenX > screenW + 100 || screenY < -100 || screenY > screenH + 100
-                     then Nothing
-                     else Just (screenX, screenY)
+worldToScreen :: (Float, Float, Float) -> Float -> Float -> Float -> Float -> (Float, Float, Float) -> Maybe (Float, Float, Float)
+worldToScreen playerPos aimXDeg aimYDeg screenW screenH enemyPos =
+    let (deltaX, deltaY, deltaZ) = getDeltas playerPos enemyPos
+        horizDist = getDistance (deltaX, deltaY)
+        yawToRad = atan2 deltaX (-deltaY)
+        pitchToRad = atan2 deltaZ horizDist
+        footPitchToRad = atan2 (deltaZ - 4.5) horizDist -- We know that the aimY currently is 4.5 by looking at its value through CE
+        camYawRad = degToRad aimXDeg
+        camPitchRad = degToRad aimYDeg
+        deltaYaw = normalizeDelta (yawToRad - camYawRad)
+        deltaPitch = normalizeDelta (pitchToRad - camPitchRad)
+        footDeltaPitch = normalizeDelta (footPitchToRad - camPitchRad)
+        dotProd = cos deltaYaw * cos deltaPitch
+        halfHfovRad = degToRad (90 / 2)
+        aspectRatio = screenH / screenW
+        halfVfovRad = atan (tan halfHfovRad * aspectRatio)
+        screenX = screenW / 2 + (screenW / 2) * (tan deltaYaw / tan halfHfovRad)
+        screenY = screenH / 2 - (screenH / 2) * (tan deltaPitch / tan halfVfovRad)
+        footScreenY = screenH / 2 - (screenH / 2) * (tan footDeltaPitch / tan halfVfovRad)
+    in
+    if notOnScreen horizDist dotProd deltaYaw deltaPitch screenX screenW screenY screenH then Nothing
+    else Just (screenX, screenY, footScreenY)
+    where notOnScreen horizDist dotProd deltaYaw deltaPitch screenX sw screenY sh =
+            horizDist < 0.01 || dotProd < 0 || abs deltaYaw > pi / 1.8 || abs deltaPitch > pi / 1.8 || screenX < -100 || screenX > sw + 100 || screenY < -100 || screenY > sh + 100
 
 -- Draw box on bot
-drawEnemyBox :: (Float, Float) -> (Float, Float) -> IO ()
-drawEnemyBox foot head = do
-  let fx = fst foot
-      fy = snd foot
-      hx = fst head
-      hy = snd head
-      boxHeight = abs (hy - fy)
+drawEnemyBox :: (Float, Float, Float) -> IO ()
+drawEnemyBox (posX, posY, footPosY) = do
+  let fy = posY
+      hy = footPosY
+      boxHeight = fy - hy
       boxWidth = boxHeight * 0.45
-      left = (fx + hx) / 2 - boxWidth / 2
+      left = (posX + posX) / 2 - boxWidth / 2
       right = left + boxWidth
-      bottom = fy
-      top = hy
   color $ Color4 1 0 0 (0.8 :: Float)
   renderPrimitive LineLoop $ do
-    vertex $ Vertex2 left bottom
-    vertex $ Vertex2 right bottom
-    vertex $ Vertex2 right top
-    vertex $ Vertex2 left top
-
--- Draw box on bot
-drawEnemyBoxNew :: (Float, Float) -> IO ()
-drawEnemyBoxNew pos = do
-  let fx = fst pos
-      fy = snd pos
-      hx = fst pos
-      hy = snd pos
-      boxHeight = abs (hy - fy)
-      boxWidth = boxHeight * 0.45
-      left = (fx + hx) / 2 - boxWidth / 2
-      right = left + boxWidth
-      bottom = fy
-      top = hy
-  color $ Color4 1 0 0 (0.8 :: Float)
-  renderPrimitive LineLoop $ do
-    vertex $ Vertex2 left bottom
-    vertex $ Vertex2 right bottom
-    vertex $ Vertex2 right top
-    vertex $ Vertex2 left top
+    vertex $ Vertex2 left footPosY
+    vertex $ Vertex2 right footPosY
+    vertex $ Vertex2 right posY
+    vertex $ Vertex2 left posY
 
 drawESP :: (Float, Float, Float) -> Float -> Float -> [Player] -> IO ()
-drawESP camPos camYaw camPitch enemies =
+drawESP playerPos aimX aimY enemies =
     preservingMatrix $ do
 
     -- Get current viewport (Position/Size)
     vp <- get viewport
     let (_, Size vw vh) = vp  -- Ignore Position x/y (0,0)
-        projectedEnemies = do
-            enemy <- enemies
-            let mfoot = worldToScreen camPos camYaw camPitch (realToFrac vw) (realToFrac vh) (_pos enemy)
-                (enemyX, enemyY, enemyZ) = _pos enemy
-                mhead = worldToScreen camPos camYaw camPitch (realToFrac vw) (realToFrac vh) (enemyX, enemyY, enemyZ - 4.5)
-            guard (isJust mfoot && isJust mhead)
-            let foot = fromJust mfoot
-                head = fromJust mhead
-            pure (foot, head)
 
     -- 2D overlay setup
     matrixMode $= Projection
@@ -286,12 +244,10 @@ drawESP camPos camYaw camPitch enemies =
     lineWidth $= 2.0
 
     -- Draw all boxes
-    --mapM_ (\bot -> do
-    --        let (botX, botY) = fromMaybe (0, 0) (worldToScreen camPos camYaw camPitch (realToFrac vw) (realToFrac vh) (_pos bot))
-    --        drawEnemyBoxNew (botX, botY))
-    --    enemies
-
-    mapM_ (uncurry drawEnemyBox) projectedEnemies
+    mapM_ (\bot -> do
+            let (botX, botY, botFootY) = fromMaybe (0, 0, 0) (worldToScreen playerPos aimX aimY (realToFrac vw) (realToFrac vh) (_pos bot))
+            drawEnemyBox (botX, botY, botFootY))
+        enemies
 
     -- Restore states
     depthFunc $= Just Less

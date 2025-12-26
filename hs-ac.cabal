@@ -15,7 +15,6 @@ executable hs-ac
     import:           warnings
     main-is:          Main.hs
     other-modules:    Memory
-                    , GameLoop
                     , GLHook
     build-depends:    
         base >=4.7 && <5
