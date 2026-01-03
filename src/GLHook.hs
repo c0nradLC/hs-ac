@@ -13,21 +13,20 @@ import GHC.Int (Int32)
 import Numeric (readHex)
 import Data.Ord (comparing)
 import Data.Maybe (fromMaybe, catMaybes)
-import Graphics.Rendering.OpenGL (Size(..), matrixMode, loadIdentity, HasSetter (($=)), MatrixMode (Modelview, Projection), ortho, HasGetter (get), viewport, lineWidth, ComparisonFunction (Less, Always), Capability (Enabled, Disabled), depthFunc, Color (color), Color4 (Color4), renderPrimitive, PrimitiveMode (LineLoop), Vertex2 (Vertex2), Vertex (vertex), preservingMatrix, BlendingFactor (SrcAlpha, OneMinusSrcAlpha), blendFunc, blend)
-
--- SDL2 Window type (opaque pointer)
-type SDL_Window = Ptr ()
+import Graphics.Rendering.OpenGL (Size(..), matrixMode, loadIdentity, HasSetter (($=)), MatrixMode (Projection), ortho, HasGetter (get), viewport, lineWidth, ComparisonFunction (Always), Capability (Enabled), depthFunc, Color (color), Color4 (Color4), renderPrimitive, PrimitiveMode (LineLoop), Vertex2 (Vertex2), Vertex (vertex), preservingMatrix, BlendingFactor (SrcAlpha, OneMinusSrcAlpha), blendFunc, blend)
+import Foreign.Storable (Storable(poke))
+import Data.List.NonEmpty (fromList)
+import Control.Concurrent (forkIO)
 
 -- Our hook for SDL_SwapWindow
-foreign export ccall "sdlGLSwapWindowHook" sdlGLSwapWindowHook :: SDL_Window -> IO ()
+foreign export ccall "sdlGLSwapWindowHook" sdlGLSwapWindowHook :: Ptr () -> IO ()
 
-sdlGLSwapWindowHook :: SDL_Window -> IO ()
+sdlGLSwapWindowHook :: Ptr () -> IO ()
 sdlGLSwapWindowHook _ = do
 
     processId <- getProcessID
     let pid = fromIntegral processId
         procPath = "/proc/" ++ show pid
-        memPath = procPath ++ "/mem"
     modules <- Mem.getProcessModules $ procPath ++ "/maps"
     gameModuleBaseAddr <- case find (\modl -> Mem._name modl == "linux_64_client") modules of
         Just gameModule -> do
@@ -40,23 +39,22 @@ sdlGLSwapWindowHook _ = do
     let maxPlayersAddress = gameModuleBaseAddr + (fst . head $ readHex "19d52C")
     let ammoInstrAddr = gameModuleBaseAddr + (fst . head $ readHex "fd06e")
     let recoilInstrAddr = gameModuleBaseAddr + (fst . head $ readHex "77a9c")
-    -- Need to revisit how the knockback works, it might not be this, maybe instead of NOP we need to patch it differently
-    -- let knockbackInstrAddr = gameModuleBaseAddr + (fst . head $ readHex "fcf6d")
+    let spreadInstrAddr = gameModuleBaseAddr + (fst . head $ readHex "fafc9")
 
     -- Patch Infinite ammo
     --ammoInstrVal <- Mem.readInstruction pid ammoInstrAddr 3
-    Mem.writeInstruction (fromIntegral pid) ammoInstrAddr (BS.pack $ replicate 3 0x90)
+    Mem.writeMemoryBytes (fromIntegral pid) ammoInstrAddr (replicate 3 0x90)
     -- Rollback patch
     --Mem.writeInstruction pid ammoInstrAddr $ fromMaybe (B8.pack "") ammoInstrVal
 
     -- No recoil
     --noRecoilInstrVal <- Mem.readInstruction pid recoilInstrAddr 6
-    Mem.writeInstruction pid recoilInstrAddr (BS.pack $ replicate 6 0x90)
+    Mem.writeMemoryBytes pid recoilInstrAddr (replicate 6 0x90)
     -- Rollback patch
     --Mem.writeInstruction pid recoilInstrAddr $ fromMaybe (B8.pack "") noRecoilInstrVal
 
-    -- No knockback
-    --Mem.writeInstruction pid knockbackInstrAddr (BS.pack $ replicate 7 090)
+    -- No spread and no kickback
+    Mem.writeMemoryBytes pid spreadInstrAddr (replicate 6 0x90)
     --test5 <- Mem.readInstruction pid knockbackInstrAddr 8
     --print $ "knockback val: " ++ show test5
 
@@ -64,18 +62,18 @@ sdlGLSwapWindowHook _ = do
     case mPlayerEntityAddress of
         Just playerEntityAddr -> do
             let healthAddr = playerEntityAddr + (fst . head $ readHex "100")
-            let ammoAddr = playerEntityAddr + (fst . head $ readHex "154")
+            let assaultAmmoAddr = playerEntityAddr + (fst . head $ readHex "154")
             let playerPosAddr = playerEntityAddr + (fst . head $ readHex "8")
             let playerAimYAddr = playerEntityAddr + (fst . head $ readHex "3C")
             let playerAimXAddr = playerEntityAddr + (fst . head $ readHex "38")
 
             -- Set primary ammo
-            Mem.writeMem memPath ammoAddr 1337
+            Mem.writeInt pid assaultAmmoAddr 1337
             --test1 <- Mem.readInt32 pid ammoAddr
             --print $ "AmmoAddr val: " ++ show test1
 
             -- Set health
-            Mem.writeMem memPath healthAddr 1337
+            Mem.writeInt pid healthAddr 1337
             --test2 <- Mem.readInt32 pid healthAddr
             --print $ "HealthAddr val: " ++ show test2
 
@@ -84,9 +82,9 @@ sdlGLSwapWindowHook _ = do
             mPlayerPos <- Mem.readVec3 pid playerPosAddr
             mPlayerTeam <- Mem.readInt32 pid (playerEntityAddr + playerTeamOffset)
 
-            let playerState = fromMaybe 3 mPlayerState
+            let playerState = fromMaybe 4 mPlayerState
                 playerPos = fromMaybe (0,0,0) mPlayerPos
-                playerTeam = fromMaybe 3 mPlayerTeam
+                playerTeam = fromMaybe 4 mPlayerTeam
 
             let localPlayer = Player {_pos = playerPos, _state = playerState, _team = playerTeam, _distance = Nothing}
             case mMaxPlayers of
@@ -124,8 +122,8 @@ sdlGLSwapWindowHook _ = do
                             case mTarget of
                                 Just target -> do
                                     let (aimX, aimY) = getAngles (_pos localPlayer) (_pos target)
-                                    Mem.writeFloat memPath playerAimYAddr aimY
-                                    Mem.writeFloat memPath playerAimXAddr aimX
+                                    Mem.writeFloat pid playerAimYAddr aimY
+                                    Mem.writeFloat pid playerAimXAddr aimX
                                     return ()
                                 Nothing -> return ()
                             aimX <- Mem.readFloat pid playerAimXAddr
@@ -142,14 +140,10 @@ sdlGLSwapWindowHook _ = do
 
     return ()
 
--- Function pointer callers
-foreign import ccall "dynamic"
-    callSwapWindow :: FunPtr (SDL_Window -> IO ()) -> SDL_Window -> IO ()
-
 getBotsPointers :: Word64 -> Word64 -> Int32 -> [Word64]
 getBotsPointers fstAddr sndAddr maxPlayers =
-    [fstAddr + fromIntegral i * nextBotOffset | i <- [0 .. maxPlayers-3]] ++
-    [sndAddr + fromIntegral i * nextBotOffset | i <- [0 .. maxPlayers-4]]
+    [fstAddr + (fromIntegral i * nextBotOffset) | i <- [0 .. ((maxPlayers `div` 2) - 1)]] ++
+    [sndAddr + (fromIntegral i * nextBotOffset) | i <- [0 .. ((maxPlayers `div` 2) - 2)]]
 
 getAngles :: (Float, Float, Float) -> (Float, Float, Float) -> (Float, Float)
 getAngles playerPos botPos = do
@@ -186,7 +180,7 @@ worldToScreen playerPos aimXDeg aimYDeg screenW screenH enemyPos =
         horizDist = getDistance (deltaX, deltaY)
         yawToRad = atan2 deltaX (-deltaY)
         pitchToRad = atan2 deltaZ horizDist
-        footPitchToRad = atan2 (deltaZ - 4.5) horizDist -- We know that the aimY currently is 4.5 by looking at its value through CE
+        footPitchToRad = atan2 (deltaZ - 4.5) horizDist -- We know that the aimY normally is 4.5 by looking at its value through CE
         camYawRad = degToRad aimXDeg
         camPitchRad = degToRad aimYDeg
         deltaYaw = normalizeDelta (yawToRad - camYawRad)
@@ -206,15 +200,13 @@ worldToScreen playerPos aimXDeg aimYDeg screenW screenH enemyPos =
             horizDist < 0.01 || dotProd < 0 || abs deltaYaw > pi / 1.8 || abs deltaPitch > pi / 1.8 || screenX < -100 || screenX > sw + 100 || screenY < -100 || screenY > sh + 100
 
 -- Draw box on bot
-drawEnemyBox :: (Float, Float, Float) -> IO ()
-drawEnemyBox (posX, posY, footPosY) = do
-  let fy = posY
-      hy = footPosY
-      boxHeight = fy - hy
+drawBox :: (Float, Float, Float) -> IO ()
+drawBox (posX, posY, footPosY) = do
+  let boxHeight = posY - footPosY
       boxWidth = boxHeight * 0.45
       left = (posX + posX) / 2 - boxWidth / 2
       right = left + boxWidth
-  color $ Color4 1 0 0 (0.8 :: Float)
+  color $ Color4 0 0 1 (0.8 :: Float)
   renderPrimitive LineLoop $ do
     vertex $ Vertex2 left footPosY
     vertex $ Vertex2 right footPosY
@@ -234,26 +226,17 @@ drawESP playerPos aimX aimY enemies =
     loadIdentity
     ortho 0 (realToFrac vw) (realToFrac vh) 0 (-1) 1
 
-    matrixMode $= Modelview 0
-    loadIdentity
-
     -- Overlay states
     depthFunc $= Just Always
     blend $= Enabled
     blendFunc $= (SrcAlpha, OneMinusSrcAlpha)
-    lineWidth $= 2.0
+    lineWidth $= 2.5
 
-    -- Draw all boxes
+    -- Draw boxes
     mapM_ (\bot -> do
             let (botX, botY, botFootY) = fromMaybe (0, 0, 0) (worldToScreen playerPos aimX aimY (realToFrac vw) (realToFrac vh) (_pos bot))
-            drawEnemyBox (botX, botY, botFootY))
+            drawBox (botX, botY, botFootY))
         enemies
-
-    -- Restore states
-    depthFunc $= Just Less
-    blend $= Disabled
-    lineWidth $= 1.0
-    matrixMode $= Modelview 0
 
 getClosestBot :: [Maybe Player] -> Maybe Player
 getClosestBot ms =

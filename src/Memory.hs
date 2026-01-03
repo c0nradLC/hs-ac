@@ -1,10 +1,10 @@
-module Memory (writeMem, writeFloat, readFloat, readProcessMemory, readMemoryValue, readInt32, readVec3, readString, readInstruction, writeInstruction, readAddress, findProcessId, getProcessModules, Module (..))
+module Memory (writeFloat, writeInt, writeWord32, writeMemoryBytes, readFloat, readMemoryValue, readInt32, readVec3, readAddress, findProcessId, getProcessModules, Module (..))
 where
 
 import qualified Data.ByteString as BS
 import Data.List (isInfixOf)
 import Data.Text (pack, split, unpack)
-import Data.Word (Word64, Word8)
+import Data.Word (Word64, Word32, Word8)
 import Foreign (
     Int32,
     Storable (peek, poke, sizeOf),
@@ -12,77 +12,57 @@ import Foreign (
     castPtr,
  )
 import GHC.IO.Handle (SeekMode (AbsoluteSeek), hClose, hSeek)
-import GHC.IO.Handle.FD (openBinaryFile)
+import GHC.IO.Handle.FD (withBinaryFile)
 import GHC.IO.IOMode (IOMode (ReadMode, WriteMode))
 import Numeric (readHex)
 import System.Directory (doesFileExist, getDirectoryContents)
 
-writeMem :: FilePath -> Word64 -> Word64 -> IO ()
-writeMem memPath addr val = do
+writeFloat :: Int -> Word64 -> Float -> IO ()
+writeFloat = writeMemoryValue
+
+writeInt :: Int -> Word64 -> Int -> IO ()
+writeInt = writeMemoryValue
+
+writeWord32 :: Int -> Word64 -> Word32 -> IO ()
+writeWord32 = writeMemoryValue
+
+writeMemoryValue :: (Storable a) => Int -> Word64 -> a -> IO ()
+writeMemoryValue pid address val = do
+    let memPath = "/proc/" ++ show pid ++ "/mem"
     bytes <- allocaBytes (sizeOf val) $ \ptr -> do
         poke ptr val
         BS.packCStringLen (castPtr ptr, sizeOf val)
-    handle <- openBinaryFile memPath WriteMode
 
-    hSeek handle AbsoluteSeek (fromIntegral addr)
-
-    BS.hPut handle bytes
-    hClose handle
-    return ()
-
-writeFloat :: FilePath -> Word64 -> Float -> IO ()
-writeFloat memPath addr val = do
-    bytes <- allocaBytes (sizeOf val) $ \ptr -> do
-        poke ptr val
-        BS.packCStringLen (castPtr ptr, sizeOf val)
-    handle <- openBinaryFile memPath WriteMode
-
-    hSeek handle AbsoluteSeek (fromIntegral addr)
-
-    BS.hPut handle bytes
-    hClose handle
-    return ()
-
+    withBinaryFile memPath WriteMode (\handle -> do
+        hSeek handle AbsoluteSeek (fromIntegral address)
+        BS.hPut handle bytes
+        )
 
 writeMemoryBytes :: Int -> Word64 -> [Word8] -> IO ()
 writeMemoryBytes pid address bytes = do
     let memPath = "/proc/" ++ show pid ++ "/mem"
     let byteString = BS.pack bytes
 
-    handle <- openBinaryFile memPath WriteMode
-    hSeek handle AbsoluteSeek (fromIntegral address)
-    BS.hPut handle byteString
-    hClose handle
-
--- Read from process memory via /proc/<pid>/mem
-readProcessMemory :: Int -> Word64 -> Int -> IO (Maybe BS.ByteString)
-readProcessMemory pid address size = do
-    let memPath = "/proc/" ++ show pid ++ "/mem"
-
-    -- Check if file exists
-    exists <- doesFileExist memPath
-    if not exists
-        then return Nothing
-        else do
-            -- Open the memory file
-            handle <- openBinaryFile memPath ReadMode
-
-            -- Seek to the address
-            hSeek handle AbsoluteSeek (fromIntegral address)
-
-            -- Read the memory
-            content <- BS.hGet handle size
-            hClose handle
-
-            return $
-                if BS.length content == size
-                    then Just content
-                    else Nothing
+    withBinaryFile memPath WriteMode (\handle -> do
+        hSeek handle AbsoluteSeek (fromIntegral address)
+        BS.hPut handle byteString
+        )
 
 -- Read a specific type from memory
 readMemoryValue :: (Storable a) => Int -> Word64 -> IO (Maybe a)
 readMemoryValue pid address = do
-    mbBytes <- readProcessMemory pid address (sizeOf (undefined :: Word64))
+    let memPath = "/proc/" ++ show pid ++ "/mem"
+    --mbBytes <- readProcessMemory pid address (sizeOf (undefined :: Word64))
+    mbBytes <- withBinaryFile memPath ReadMode (\handle -> do
+        let size = sizeOf (undefined :: Word64)
+        hSeek handle AbsoluteSeek (fromIntegral address)
+        content <- BS.hGet handle size
+        hClose handle
+        return $
+            if BS.length content == size
+                then Just content
+                else Nothing
+        )
     case mbBytes of
         Just bytes ->
             if BS.length bytes == sizeOf (undefined :: Word64)
@@ -105,10 +85,6 @@ readFloat = readMemoryValue
 -- Read an Adress (hex) value
 readAddress :: Int -> Word64 -> IO (Maybe Word64)
 readAddress = readMemoryValue
-
--- Read string
-readString :: Int -> Word64 -> Int -> IO (Maybe BS.ByteString)
-readString = readProcessMemory
 
 -- Read three floats in sequence, representing an x, y, z position
 readVec3 :: Int -> Word64 -> IO (Maybe (Float, Float, Float))
@@ -137,27 +113,6 @@ findProcessId processName = do
                 return $ processName `isInfixOf` content
             else return False
 
-
-
--- Read instruction as ByteString
-readInstruction :: Int -> Word64 -> Int -> IO (Maybe BS.ByteString)
-readInstruction pid address size = do
-    mbBytes <- readProcessMemory pid address size
-    case mbBytes of
-        Just bytes -> do
-            -- Verify we got the right amount
-            if BS.length bytes == size
-                then return (Just bytes)
-                else do
-                    putStrLn $ "Warning: Read " ++ show (BS.length bytes) ++
-                             " bytes, expected " ++ show size
-                    return Nothing
-        Nothing -> return Nothing
-
--- Write instruction from ByteString
-writeInstruction :: Int -> Word64 -> BS.ByteString -> IO ()
-writeInstruction pid address bytes = do
-    writeMemoryBytes pid address (BS.unpack bytes)
 
 -- remove what's below this line and move it to main, it's only called one time, no real need to have it as a function
 

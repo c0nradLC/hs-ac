@@ -4,15 +4,11 @@ import Data.List (find, minimumBy)
 import qualified Memory as Mem
 import Numeric (readHex, showHex)
 import qualified Data.ByteString as BS
-import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Maybe (fromMaybe)
 import qualified Data.ByteString.Char8 as B8
 import Data.Word
-import qualified Data.ByteString.Builder as BS
-import qualified Data.ByteString.Builder as B8
 import GHC.Int (Int32)
-import Control.Monad (forever, when, filterM)
-import Control.Concurrent (threadDelay)
-import Debug.Trace (trace)
+import Control.Monad (forever)
 import Data.Ord (comparing)
 
 main :: IO ()
@@ -21,7 +17,6 @@ main = do
     case mbPid of
         Just pid -> do
             let procPath = "/proc/" ++ show pid
-                memPath = procPath ++ "/mem"
             modules <- Mem.getProcessModules $ procPath ++ "/maps"
             gameModuleBaseAddr <- case find (\mod -> Mem._name mod == "linux_64_client") modules of
                 Just gameModule -> do
@@ -41,9 +36,14 @@ main = do
                     let playerAimYAddr = playerEntityAddr + (fst . head $ readHex "3C")
                     let playerAimXAddr = playerEntityAddr + (fst . head $ readHex "38")
                     let playerPosAddr = playerEntityAddr + (fst . head $ readHex "8")
-                    let test = gameModuleBaseAddr + (fst .head $ readHex "1AEDA0")
+                    let recoilInstrAddr = gameModuleBaseAddr + (fst . head $ readHex "77a9c")
+                    let spreadInstrAddr = gameModuleBaseAddr + (fst . head $ readHex "fafc9")
+
+                    Mem.writeMemoryBytes pid recoilInstrAddr (replicate 6 0x90)
+                    Mem.writeMemoryBytes pid spreadInstrAddr (replicate 6 0x90)
 
                     forever $ do
+                        print $ show pid
                         print $ "Player entity: " ++ show (showHex playerEntityAddr "")
                         mMaxPlayers <- Mem.readInt32 pid maxPlayersAddress
                         mPlayerState <- Mem.readInt32 pid (playerEntityAddr + playerStateOffset)
@@ -81,17 +81,19 @@ main = do
                                                             , _team = botTeam
                                                             , _distance = Just $ getDistance (deltaX, deltaY)
                                                             }
-                                                    if _team bot /= _team localPlayer && _state bot == 0 then
+                                                    if _team bot /= _team localPlayer && _state bot == 0 then do
+                                                        print $ "Bot Address: " ++ showHex botAddress ""
                                                         return $ Just bot
                                                     else return Nothing
                                                 Nothing -> return Nothing
                                             ) botPointers
+
                                         let mTarget = getClosestBot bots
                                         case mTarget of
                                             Just target -> do
                                                 let (aimX, aimY) = getAngles (_pos localPlayer) (_pos target)
-                                                Mem.writeFloat memPath playerAimYAddr aimY
-                                                Mem.writeFloat memPath playerAimXAddr aimX
+                                                Mem.writeFloat pid playerAimYAddr aimY
+                                                Mem.writeFloat pid playerAimXAddr aimX
                                                 return ()
                                             Nothing -> return ()
                                         return ()
@@ -103,8 +105,8 @@ main = do
 
 getBotsPointers :: Word64 -> Word64 -> Int32 -> [Word64]
 getBotsPointers fstAddr sndAddr maxPlayers =
-    [fstAddr + fromIntegral i * nextBotOffset | i <- [0 .. maxPlayers-3]] ++
-    [sndAddr + fromIntegral i * nextBotOffset | i <- [0 .. maxPlayers-4]]
+    [fstAddr + (fromIntegral i * nextBotOffset) | i <- [0 .. ((maxPlayers `div` 2) - 1)]] ++
+    [sndAddr + (fromIntegral i * nextBotOffset) | i <- [0 .. ((maxPlayers `div` 2) - 2)]]
 
 getAngles :: (Float, Float, Float) -> (Float, Float, Float) -> (Float, Float)
 getAngles playerPos botPos = do
