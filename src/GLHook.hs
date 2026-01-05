@@ -14,12 +14,16 @@ import Numeric (readHex)
 import Data.Ord (comparing)
 import Data.Maybe (fromMaybe, catMaybes)
 import Graphics.Rendering.OpenGL (Size(..), matrixMode, loadIdentity, HasSetter (($=)), MatrixMode (Projection), ortho, HasGetter (get), viewport, lineWidth, ComparisonFunction (Always), Capability (Enabled), depthFunc, Color (color), Color4 (Color4), renderPrimitive, PrimitiveMode (LineLoop), Vertex2 (Vertex2), Vertex (vertex), preservingMatrix, BlendingFactor (SrcAlpha, OneMinusSrcAlpha), blendFunc, blend)
-import Foreign.Storable (Storable(poke))
+import Foreign.Storable (Storable(poke, sizeOf, alignment, peek, pokeByteOff, peekByteOff))
 import Data.List.NonEmpty (fromList)
 import Control.Concurrent (forkIO)
+import Foreign.C.Types (CFloat(..), CBool(..), CUInt(..))
 
--- Our hook for SDL_SwapWindow
+-- Our hooks
 foreign export ccall "sdlGLSwapWindowHook" sdlGLSwapWindowHook :: Ptr () -> IO ()
+
+foreign import ccall unsafe "IsVisible" isVisible :: CUInt -> CFloat -> CFloat -> CFloat
+                                                -> CFloat -> CFloat -> CFloat -> IO CBool
 
 sdlGLSwapWindowHook :: Ptr () -> IO ()
 sdlGLSwapWindowHook _ = do
@@ -40,23 +44,27 @@ sdlGLSwapWindowHook _ = do
     let ammoInstrAddr = gameModuleBaseAddr + (fst . head $ readHex "fd06e")
     let recoilInstrAddr = gameModuleBaseAddr + (fst . head $ readHex "77a9c")
     let spreadInstrAddr = gameModuleBaseAddr + (fst . head $ readHex "fafc9")
+    let attackPhysicsFunctionAddr = gameModuleBaseAddr + (fst . head $ readHex "faf20")
+    let isVisibleFunctionAddr = gameModuleBaseAddr + (fst . head $ readHex "1253e0")
 
     -- Patch Infinite ammo
     --ammoInstrVal <- Mem.readInstruction pid ammoInstrAddr 3
-    Mem.writeMemoryBytes (fromIntegral pid) ammoInstrAddr (replicate 3 0x90)
+    Mem.writeMemoryBytes pid ammoInstrAddr (replicate 3 0x90)
     -- Rollback patch
     --Mem.writeInstruction pid ammoInstrAddr $ fromMaybe (B8.pack "") ammoInstrVal
 
     -- No recoil
     --noRecoilInstrVal <- Mem.readInstruction pid recoilInstrAddr 6
-    Mem.writeMemoryBytes pid recoilInstrAddr (replicate 6 0x90)
+    --Mem.writeMemoryBytes pid recoilInstrAddr (replicate 6 0x90)
     -- Rollback patch
     --Mem.writeInstruction pid recoilInstrAddr $ fromMaybe (B8.pack "") noRecoilInstrVal
 
     -- No spread and no kickback
-    Mem.writeMemoryBytes pid spreadInstrAddr (replicate 6 0x90)
+    --Mem.writeMemoryBytes pid spreadInstrAddr (replicate 6 0x90)
     --test5 <- Mem.readInstruction pid knockbackInstrAddr 8
     --print $ "knockback val: " ++ show test5
+
+    Mem.writeMemoryBytes pid attackPhysicsFunctionAddr (replicate 1 0xc3)
 
     mPlayerEntityAddress <- Mem.readAddress pid playerEntityPointer
     case mPlayerEntityAddress of
@@ -68,12 +76,12 @@ sdlGLSwapWindowHook _ = do
             let playerAimXAddr = playerEntityAddr + (fst . head $ readHex "38")
 
             -- Set primary ammo
-            Mem.writeInt pid assaultAmmoAddr 1337
+            Mem.writeInt pid assaultAmmoAddr 9999
             --test1 <- Mem.readInt32 pid ammoAddr
             --print $ "AmmoAddr val: " ++ show test1
 
             -- Set health
-            Mem.writeInt pid healthAddr 1337
+            Mem.writeInt pid healthAddr 9999
             --test2 <- Mem.readInt32 pid healthAddr
             --print $ "HealthAddr val: " ++ show test2
 
@@ -118,7 +126,7 @@ sdlGLSwapWindowHook _ = do
                                         else return Nothing
                                     Nothing -> return Nothing
                                 ) botPointers
-                            let mTarget = getClosestBot bots
+                            mTarget <- getClosestVisibleBot (fromIntegral isVisibleFunctionAddr) (_pos localPlayer) bots
                             case mTarget of
                                 Just target -> do
                                     let (aimX, aimY) = getAngles (_pos localPlayer) (_pos target)
@@ -238,11 +246,18 @@ drawESP playerPos aimX aimY enemies =
             drawBox (botX, botY, botFootY))
         enemies
 
-getClosestBot :: [Maybe Player] -> Maybe Player
-getClosestBot ms =
+getClosestVisibleBot :: Word64 -> (Float, Float, Float) -> [Maybe Player] -> IO (Maybe Player)
+getClosestVisibleBot isVisibleAddr (playerX, playerY, playerZ) ms =
   let candidates = [(p, d) | Just p <- ms, Just d <- [_distance p]]
-  in if null candidates then Nothing else Just (fst (minimumBy (comparing snd) candidates))
-
+  in
+    if null candidates then
+        return Nothing
+    else do
+        let bot = fst (minimumBy (comparing snd) candidates)
+            (botX, botY, botZ) = _pos bot
+        isBotVisible <- isVisible (fromIntegral isVisibleAddr) (realToFrac playerX) (realToFrac playerY) (realToFrac playerZ) (realToFrac botX) (realToFrac botY) (realToFrac botZ)
+        if isBotVisible == 1 then return $ Just bot else return Nothing
+        
 nextBotOffset :: Word64
 nextBotOffset = fst . head $ readHex "10"
 

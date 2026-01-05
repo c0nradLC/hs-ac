@@ -38,13 +38,15 @@ main = do
                     let playerPosAddr = playerEntityAddr + (fst . head $ readHex "8")
                     let recoilInstrAddr = gameModuleBaseAddr + (fst . head $ readHex "77a9c")
                     let spreadInstrAddr = gameModuleBaseAddr + (fst . head $ readHex "fafc9")
+                    let attackPhysicsAddr = gameModuleBaseAddr + (fst . head $ readHex "faf20")
 
-                    Mem.writeMemoryBytes pid recoilInstrAddr (replicate 6 0x90)
-                    Mem.writeMemoryBytes pid spreadInstrAddr (replicate 6 0x90)
+                    --Mem.writeMemoryBytes pid recoilInstrAddr (replicate 6 0x90)
+                    --Mem.writeMemoryBytes pid spreadInstrAddr (replicate 6 0x90)
+
+                    Mem.writeMemoryBytes pid attackPhysicsAddr (replicate 1 0xc3)
 
                     forever $ do
                         print $ show pid
-                        print $ "Player entity: " ++ show (showHex playerEntityAddr "")
                         mMaxPlayers <- Mem.readInt32 pid maxPlayersAddress
                         mPlayerState <- Mem.readInt32 pid (playerEntityAddr + playerStateOffset)
                         mPlayerPos <- Mem.readVec3 pid (playerEntityAddr + playerPosOffset)
@@ -149,7 +151,6 @@ playerPosOffset = fst . head $ readHex "8"
 
 playerNameOffset :: Word64
 playerNameOffset = fst . head $ readHex "219"
-
 
 data Player
     = Player
