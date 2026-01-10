@@ -52,7 +52,6 @@ writeMemoryBytes pid address bytes = do
 readMemoryValue :: (Storable a) => ProcessID -> Word64 -> IO (Maybe a)
 readMemoryValue pid address = do
     let memPath = "/proc/" ++ show pid ++ "/mem"
-    --mbBytes <- readProcessMemory pid address (sizeOf (undefined :: Word64))
     mbBytes <- withBinaryFile memPath ReadMode (\handle -> do
         let size = sizeOf (undefined :: Word64)
         hSeek handle AbsoluteSeek (fromIntegral address)

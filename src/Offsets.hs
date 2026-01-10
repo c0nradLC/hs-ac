@@ -11,14 +11,20 @@ playerListPointer = 0x19d520
 maxPlayers :: Word64
 maxPlayers = 0x19d52C
 
-ammoInstr :: Word64
-ammoInstr = 0xfd06e
-    
+consumeAmmoInstr :: Word64
+consumeAmmoInstr = 0xfd06e
+
 attackPhysicsFunction :: Word64
 attackPhysicsFunction = 0xfaf20
 
 isVisibleFunction :: Word64
 isVisibleFunction = 0x1253e0
+
+attackFunction :: Word64
+attackFunction = 0x78610
+
+playerInCrosshairFunction :: Word64
+playerInCrosshairFunction = 0xf7780
 
 playerHealth :: Word64 
 playerHealth = 0x100
@@ -40,9 +46,6 @@ playerState = 0x32C
 
 playerName :: Word64
 playerName = 0x219
-
-primaryWeaponAmmo :: Word64
-primaryWeaponAmmo = 0x154
 
 nextBot :: Word64
 nextBot = 0x10
