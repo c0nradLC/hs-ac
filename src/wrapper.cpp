@@ -3,17 +3,11 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
-
-typedef void* SDL_Window;
+#include <unistd.h>
 
 /* Haskell runtime initialization */
 extern "C" void hs_init(int *argc, char **argv[]);
 
-/* Haskell functions */
-extern "C" void sdlGLSwapWindowHook(SDL_Window *window);
-extern "C" void patchClient();
-
-/* vec definition copied from AC's geom.h, needs to be the same vec struct in order for IsVisible to calculate things properly */
 struct vec
 {
     union
@@ -24,21 +18,18 @@ struct vec
     };
 };
 
-class playerent
-{
-    public:
-    char teamPadding[0x320]; // Padding for offset alignment when "converting" AC's playerent to our playerent. Needed for playerincrosshair.
-    int team;
-};
+/* Haskell functions */
+extern "C" void sdlGLSwapWindowHook(void* original_function);
+extern "C" void patchClient();
 
 static bool hs_initialized = false;
 
 /* Original function pointers */
-static void (*real_SDL_GL_SwapWindow)(SDL_Window *window) = NULL;
+static void (*real_SDL_GL_SwapWindow)(void *window) = NULL;
 
 extern "C" typedef uint8_t (*IsVisible_t)(vec from, vec to, void *tracer, bool skipTags);
 extern "C" typedef void (*Attack_t)(bool attack);
-extern "C" typedef playerent* (*PlayerInCrosshair_t)();
+extern "C" typedef void* (*PlayerInCrosshair_t)();
 
 void __attribute__ ((constructor)) setup() {
     if (!hs_initialized) {
@@ -46,27 +37,29 @@ void __attribute__ ((constructor)) setup() {
         hs_initialized = true;
     }
     
+
+    sleep(1);
     patchClient();
 }
 
 /* Our SDL_GL_SwapWindow hook/replacement */
-extern "C" void SDL_GL_SwapWindow(SDL_Window *window) {
+/*extern "C" void SDL_GL_SwapWindow(void *window) {
     if (!hs_initialized) {
         hs_init(NULL, NULL);
         hs_initialized = true;
     }
 
-    // Needs to be called before the actual SwapWindow otherwise ESP boxes dont get drawn
-    sdlGLSwapWindowHook(window);
-
     if (!real_SDL_GL_SwapWindow) {
-        real_SDL_GL_SwapWindow = (void(*) (void**))dlsym(RTLD_NEXT, "SDL_GL_SwapWindow");
+        real_SDL_GL_SwapWindow = (void(*) (void*))dlsym(RTLD_NEXT, "SDL_GL_SwapWindow");
     }
 
     if (real_SDL_GL_SwapWindow) {
-        real_SDL_GL_SwapWindow(window);
+        // Needs to be called before the actual SwapWindow otherwise ESP boxes dont get drawn
+        sdlGLSwapWindowHook((void*)real_SDL_GL_SwapWindow);
+
+        //real_SDL_GL_SwapWindow(window);
     }
-}
+}*/
 
 /* Our direct calls to AC's functions */
 extern "C" bool isvisible(uintptr_t isVisibleFunctionAddr, float x1, float y1, float z1,
@@ -87,18 +80,18 @@ extern "C" void attack(uintptr_t attackFunctionAddr, bool attack)
     real_Attack(attack);
 }
 
-extern "C" int playerincrosshair(uintptr_t playerInCrosshairFunctionAddr)
+extern "C" void* playerincrosshair(uintptr_t playerInCrosshairFunctionAddr)
 {
     PlayerInCrosshair_t real_PlayerInCrosshair = (PlayerInCrosshair_t)playerInCrosshairFunctionAddr;
 
-    playerent* playerAimedAt = real_PlayerInCrosshair();
+    void* playerAimedAt = real_PlayerInCrosshair();
 
     if (playerAimedAt)
     {
-        return playerAimedAt->team;
+        return playerAimedAt;
     }
     else
     {
-        return -1;
+        return nullptr;
     }
 }
