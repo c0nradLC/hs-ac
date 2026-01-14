@@ -16,15 +16,14 @@ import Data.IORef (IORef, newIORef, writeIORef, readIORef)
 import GHC.IO (unsafePerformIO)
 import GHC.Conc.IO (threadDelay)
 import Control.Concurrent (forkIO)
-import Control.Monad (when)
+import Control.Monad (when, unless)
 import System.Posix (ProcessID, dlopen, RTLDFlags (RTLD_LAZY, RTLD_GLOBAL), dlsym)
 import Foreign
     ( Int32,
-      Word64,
       Ptr,
-      Storable(peekByteOff, poke, peek, alignment, sizeOf), nullPtr, FunPtr )
+      Storable(peekByteOff, poke, peek, alignment, sizeOf), nullPtr, FunPtr, nullFunPtr, WordPtr (WordPtr), castPtrToFunPtr, wordPtrToPtr )
 
-data CPlayer = CPlayer
+newtype CPlayer = CPlayer
     { _cpTeam :: CInt
     }
     deriving (Show)
@@ -43,13 +42,22 @@ instance Storable CPlayer where
     -- no poke definition because we won't be updating the playerent from Haskell
     poke _ _ = return ()
 
+
+
 -- our SwapWindow hook
-foreign export ccall "sdlGLSwapWindowHook" sdlGLSwapWindowHook :: Ptr () -> Ptr () -> IO ()
+foreign export ccall "sdlGLSwapWindowHook" sdlGLSwapWindowHook :: Ptr () -> IO ()
 
-foreign export ccall "SDL_GL_SwapWindow" sdlGLSwapWindowHookNew :: Ptr () -> IO ()
-
+-- Call to function pointer for libSDL's SDL_GL_SwapWindow
 foreign import ccall "dynamic"
-    dynIO :: FunPtr (Ptr a -> IO ()) -> Ptr a -> IO ()
+    callOriginalSwapWindow :: FunPtr (Ptr () -> IO ()) -> Ptr () -> IO ()
+
+-- Call to function pointer for AC's attack
+foreign import ccall "dynamic"
+    callAttack :: FunPtr (Int -> IO ()) -> Int -> IO ()
+
+-- Call to function pointer for AC's playerincrosshair
+foreign import ccall "dynamic"
+    callPlayerInCrosshair :: FunPtr (IO (Ptr CPlayer)) -> IO (Ptr CPlayer)
 
 -- patchClient
 foreign export ccall "patchClient" patchClient :: IO ()
@@ -58,25 +66,16 @@ foreign export ccall "patchClient" patchClient :: IO ()
 foreign import ccall "isvisible" isvisible :: CUInt -> CFloat -> CFloat -> CFloat
                                                 -> CFloat -> CFloat -> CFloat -> IO CBool
 
--- Import our bridge to call attack from physics.cpp
-foreign import ccall "attack" attack :: CUInt -> CBool -> IO ()
-
-{-
-    Import our bridge to call playerincrosshair from weapon.cpp
-    Our implementation actually returns the team of the player in crosshair, if there are any
--}
-foreign import ccall "playerincrosshair" playerincrosshair :: CUInt -> IO (Ptr CPlayer)
-
 {-# NOINLINE playerEntityPointerRef #-}
-playerEntityPointerRef :: IORef Word64
+playerEntityPointerRef :: IORef Word
 playerEntityPointerRef = unsafePerformIO $ newIORef 0x0
 
 {-# NOINLINE playerListPointerRef #-}
-playerListPointerRef :: IORef Word64
+playerListPointerRef :: IORef Word
 playerListPointerRef = unsafePerformIO $ newIORef 0x0
 
 {-# NOINLINE maxPlayersAddressRef #-}
-maxPlayersAddressRef :: IORef Word64
+maxPlayersAddressRef :: IORef Word
 maxPlayersAddressRef = unsafePerformIO $ newIORef 0x0
 
 {-# NOINLINE isvisibleFunctionAddressRef #-}
@@ -84,18 +83,20 @@ isvisibleFunctionAddressRef :: IORef CUInt
 isvisibleFunctionAddressRef = unsafePerformIO $ newIORef 0
 
 {-# NOINLINE attackFunctionAddressRef #-}
-attackFunctionAddressRef :: IORef CUInt
-attackFunctionAddressRef = unsafePerformIO $ newIORef 0
+attackFunctionAddressRef :: IORef Word
+attackFunctionAddressRef = unsafePerformIO $ newIORef 0x0
 
 {-# NOINLINE playerInCrosshairFunctionAddressRef #-}
-playerInCrosshairFunctionAddressRef :: IORef CUInt
-playerInCrosshairFunctionAddressRef = unsafePerformIO $ newIORef 0
+playerInCrosshairFunctionAddressRef :: IORef Word
+playerInCrosshairFunctionAddressRef = unsafePerformIO $ newIORef 0x0
 
 {-# NOINLINE loadedRef #-}
 loadedRef :: IORef Bool
 loadedRef = unsafePerformIO $ newIORef False
 
---originalSwapWindowFuncRef :: IORef (Maybe FunPtr (Ptr () -> IO ()))
+{-# NOINLINE originalSwapWindowFuncRef #-}
+originalSwapWindowFuncRef :: IORef (Maybe (FunPtr (Ptr () -> IO ())))
+originalSwapWindowFuncRef = unsafePerformIO $ newIORef Nothing
 
 patchClient :: IO ()
 patchClient = do
@@ -114,27 +115,27 @@ patchClient = do
         writeIORef playerListPointerRef $ gameModuleBase + Offsets.playerListPointer
         writeIORef maxPlayersAddressRef $ gameModuleBase + Offsets.maxPlayers
         writeIORef isvisibleFunctionAddressRef $ fromIntegral $ gameModuleBase + Offsets.isVisibleFunction
-        writeIORef attackFunctionAddressRef $ fromIntegral $ gameModuleBase + Offsets.attackFunction
+        writeIORef attackFunctionAddressRef $ gameModuleBase + Offsets.attackFunction
         writeIORef playerInCrosshairFunctionAddressRef $ fromIntegral $ gameModuleBase + Offsets.playerInCrosshairFunction
 
         writeIORef loadedRef True
     return ()
 
-sdlGLSwapWindowHook :: Ptr () -> Ptr () -> IO ()
-sdlGLSwapWindowHook _ _ = do
+sdlGLSwapWindowHook :: Ptr () -> IO ()
+sdlGLSwapWindowHook windowPtr = do
     isLoaded <- readIORef loadedRef
-    when isLoaded hack
+    swapWindowR <- readIORef originalSwapWindowFuncRef
+    let originalSwapWindow = fromMaybe nullFunPtr swapWindowR
+    if originalSwapWindow == nullFunPtr then do
+        dl <- dlopen "libSDL2-2.0.so" [RTLD_LAZY, RTLD_GLOBAL]
+        original_SwapWindow <- dlsym dl "SDL_GL_SwapWindow"
+        unless (original_SwapWindow == nullFunPtr) $ do
+            writeIORef originalSwapWindowFuncRef $ Just original_SwapWindow
+    else do
+        when isLoaded hack
+        callOriginalSwapWindow originalSwapWindow windowPtr
 
-sdlGLSwapWindowHookNew :: Ptr () -> IO ()
-sdlGLSwapWindowHookNew windowPtr = do
-    print "test"
-    isLoaded <- readIORef loadedRef
-    dl <- dlopen "libSDL2-2.0.so" [RTLD_LAZY, RTLD_GLOBAL]
-    original_SwapWindow <- dlsym dl "SDL_GL_SwapWindow"
-    dynIO original_SwapWindow windowPtr
-    when isLoaded hack
-
-getLocalPlayerAndAimAddresses :: ProcessID -> IO (Player, (Word64, Word64))
+getLocalPlayerAndAimAddresses :: ProcessID -> IO (Player, (Word, Word))
 getLocalPlayerAndAimAddresses pid = do
     playerEntityPointer <- readIORef playerEntityPointerRef
     mPlayerEntityAddress <- Mem.readAddress pid playerEntityPointer
@@ -221,7 +222,7 @@ hack = do
     -- Aimbot
     aimbot pid playerAimAddresses localPlayer playersList
 
-aimbot :: ProcessID -> (Word64, Word64) -> Player -> [Player] -> IO ()
+aimbot :: ProcessID -> (Word, Word) -> Player -> [Player] -> IO ()
 aimbot pid (playerAimXAddress, playerAimYAddress) localPlayer playersList = do
     let mTarget = closestBot $ filter (\bot -> _team bot /= _team localPlayer && _visible bot) playersList
     case mTarget of
@@ -234,19 +235,22 @@ aimbot pid (playerAimXAddress, playerAimYAddress) localPlayer playersList = do
 triggerBot :: Player -> IO ()
 triggerBot localPlayer = do
     playerInCrosshairFunctionAddress <- readIORef playerInCrosshairFunctionAddressRef
+    let playerInCrosshairFunPtr = castPtrToFunPtr $ wordPtrToPtr $ WordPtr playerInCrosshairFunctionAddress
     attackFunctionAddress <- readIORef attackFunctionAddressRef
     aimedAtPlayer <- do
-       aimedAtPlayer <- playerincrosshair playerInCrosshairFunctionAddress
-       peek aimedAtPlayer
+        playerAimedAt <- callPlayerInCrosshair playerInCrosshairFunPtr 
+        peek playerAimedAt
+    print aimedAtPlayer
     when (_cpTeam aimedAtPlayer /= -1 && _cpTeam aimedAtPlayer /= fromIntegral (_team localPlayer)) $ do
         -- We put this on a thread and call attack with bot 1 and 0 to enable the player to shoot automatically by holding down m1 if it wants to
         _ <- forkIO $ do
-            attack attackFunctionAddress 1
+            let attackFunPtr = castPtrToFunPtr $ wordPtrToPtr $ WordPtr attackFunctionAddress
+            callAttack attackFunPtr 1
             threadDelay 1
-            attack attackFunctionAddress 0
+            callAttack attackFunPtr 0
         return ()
 
-botsPointers :: Word64 -> Word64 -> Int32 -> [Word64]
+botsPointers :: Word -> Word -> Int32 -> [Word]
 botsPointers fstAddress sndAddress maxPlayers =
     [fstAddress + (fromIntegral i * Offsets.nextBot) | i <- [0 .. ((maxPlayers `div` 2) - 1)]] ++
     [sndAddress + (fromIntegral i * Offsets.nextBot) | i <- [0 .. ((maxPlayers `div` 2) - 2)]]

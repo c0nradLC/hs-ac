@@ -1,51 +1,50 @@
 module Offsets
 where
-import Data.Word (Word64)
 
-playerEntityPointer :: Word64
+playerEntityPointer :: Word
 playerEntityPointer = 0x19d518
 
-playerListPointer :: Word64
+playerListPointer :: Word
 playerListPointer = 0x19d520
 
-maxPlayers :: Word64
+maxPlayers :: Word
 maxPlayers = 0x19d52C
 
-consumeAmmoInstr :: Word64
+consumeAmmoInstr :: Word
 consumeAmmoInstr = 0xfd06e
 
-attackPhysicsFunction :: Word64
+attackPhysicsFunction :: Word
 attackPhysicsFunction = 0xfaf20
 
-isVisibleFunction :: Word64
+isVisibleFunction :: Word
 isVisibleFunction = 0x1253e0
 
-attackFunction :: Word64
+attackFunction :: Word
 attackFunction = 0x78610
 
-playerInCrosshairFunction :: Word64
+playerInCrosshairFunction :: Word
 playerInCrosshairFunction = 0xf7780
 
-playerHealth :: Word64 
+playerHealth :: Word 
 playerHealth = 0x100
 
-playerPos :: Word64
+playerPos :: Word
 playerPos = 0x8
 
-playerAimY :: Word64
+playerAimY :: Word
 playerAimY = 0x3c
 
-playerAimX :: Word64
+playerAimX :: Word
 playerAimX = 0x38
 
-playerTeam :: Word64
+playerTeam :: Word
 playerTeam =  0x320
 
-playerState :: Word64
+playerState :: Word
 playerState = 0x32C
 
-playerName :: Word64
+playerName :: Word
 playerName = 0x219
 
-nextBot :: Word64
+nextBot :: Word
 nextBot = 0x10

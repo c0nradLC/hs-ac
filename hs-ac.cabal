@@ -16,13 +16,7 @@ library
     exposed-modules:  GLHook
                     , Memory
                     , Offsets
-    ghc-options:       
-      -shared
-      -fPIC
-      -dynamic
-      -no-hs-main
-      -optl-W
-      -ldl
+    ghc-options:  -dynamic -fPIC -shared
     build-depends:    
         base >=4.7 && <5
         , directory <= 1.3.6.2
