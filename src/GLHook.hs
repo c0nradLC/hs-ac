@@ -9,11 +9,9 @@ import qualified Memory as Mem
 import Data.Ord (comparing)
 import Data.Maybe (fromMaybe, catMaybes)
 import Graphics.Rendering.OpenGL (Size(..), matrixMode, loadIdentity, HasSetter (($=)), MatrixMode (Projection), ortho, HasGetter (get), viewport, lineWidth, ComparisonFunction (Always), Capability (Enabled), depthFunc, Color (color), Color4 (Color4), renderPrimitive, PrimitiveMode (LineLoop), Vertex2 (Vertex2), Vertex (vertex), preservingMatrix, BlendingFactor (SrcAlpha, OneMinusSrcAlpha), blendFunc, blend)
-import Foreign.C.Types (CFloat(..), CBool(..), CUInt(..), CInt(..),)
+import Foreign.C.Types (CBool(..),)
 import Memory (getGameModuleBaseAddr)
 import qualified Offsets
-import Data.IORef (IORef, newIORef, writeIORef, readIORef)
-import GHC.IO (unsafePerformIO)
 import GHC.Conc.IO (threadDelay)
 import Control.Concurrent (forkIO)
 import Control.Monad (when, unless)
@@ -21,30 +19,20 @@ import System.Posix (ProcessID, dlopen, RTLDFlags (RTLD_LAZY, RTLD_GLOBAL), dlsy
 import Foreign
     ( Int32,
       Ptr,
-      Storable(peekByteOff, poke, peek, alignment, sizeOf), nullPtr, FunPtr, nullFunPtr, WordPtr (WordPtr), castPtrToFunPtr, wordPtrToPtr )
+      Storable(poke, peek), nullPtr, FunPtr, nullFunPtr, WordPtr (WordPtr), castPtrToFunPtr, wordPtrToPtr, malloc )
+import Types(Player(..), ACVec(..), ACPlayer(..))
+import Global
+    ( playerEntityPointerRef,
+      playerListPointerRef,
+      maxPlayersAddressRef,
+      isvisibleFunctionAddressRef,
+      attackFunctionAddressRef,
+      playerInCrosshairFunctionAddressRef,
+      loadedRef,
+      originalSwapWindowFuncRef )
+import Data.IORef ( readIORef, writeIORef )
 
-newtype CPlayer = CPlayer
-    { _cpTeam :: CInt
-    }
-    deriving (Show)
-
-instance Storable CPlayer where
-    sizeOf _ = 0x324
-    alignment _ = alignment (undefined :: CInt)
-
-    peek ptr = do
-        if ptr == nullPtr then do
-            return CPlayer {_cpTeam = -1}
-        else do
-            team <- peekByteOff ptr 0x320
-            return CPlayer {_cpTeam = team}
-
-    -- no poke definition because we won't be updating the playerent from Haskell
-    poke _ _ = return ()
-
-
-
--- our SwapWindow hook
+-- Our SwapWindow hook
 foreign export ccall "sdlGLSwapWindowHook" sdlGLSwapWindowHook :: Ptr () -> IO ()
 
 -- Call to function pointer for libSDL's SDL_GL_SwapWindow
@@ -53,50 +41,18 @@ foreign import ccall "dynamic"
 
 -- Call to function pointer for AC's attack
 foreign import ccall "dynamic"
-    callAttack :: FunPtr (Int -> IO ()) -> Int -> IO ()
+    attack :: FunPtr (Int -> IO ()) -> Int -> IO ()
 
 -- Call to function pointer for AC's playerincrosshair
 foreign import ccall "dynamic"
-    callPlayerInCrosshair :: FunPtr (IO (Ptr CPlayer)) -> IO (Ptr CPlayer)
+    playerincrosshair :: FunPtr (IO (Ptr ACPlayer)) -> IO (Ptr ACPlayer)
 
 -- patchClient
 foreign export ccall "patchClient" patchClient :: IO ()
 
--- Import our bridge to call IsVisible from bot_util.cpp
-foreign import ccall "isvisible" isvisible :: CUInt -> CFloat -> CFloat -> CFloat
-                                                -> CFloat -> CFloat -> CFloat -> IO CBool
-
-{-# NOINLINE playerEntityPointerRef #-}
-playerEntityPointerRef :: IORef Word
-playerEntityPointerRef = unsafePerformIO $ newIORef 0x0
-
-{-# NOINLINE playerListPointerRef #-}
-playerListPointerRef :: IORef Word
-playerListPointerRef = unsafePerformIO $ newIORef 0x0
-
-{-# NOINLINE maxPlayersAddressRef #-}
-maxPlayersAddressRef :: IORef Word
-maxPlayersAddressRef = unsafePerformIO $ newIORef 0x0
-
-{-# NOINLINE isvisibleFunctionAddressRef #-}
-isvisibleFunctionAddressRef :: IORef CUInt
-isvisibleFunctionAddressRef = unsafePerformIO $ newIORef 0
-
-{-# NOINLINE attackFunctionAddressRef #-}
-attackFunctionAddressRef :: IORef Word
-attackFunctionAddressRef = unsafePerformIO $ newIORef 0x0
-
-{-# NOINLINE playerInCrosshairFunctionAddressRef #-}
-playerInCrosshairFunctionAddressRef :: IORef Word
-playerInCrosshairFunctionAddressRef = unsafePerformIO $ newIORef 0x0
-
-{-# NOINLINE loadedRef #-}
-loadedRef :: IORef Bool
-loadedRef = unsafePerformIO $ newIORef False
-
-{-# NOINLINE originalSwapWindowFuncRef #-}
-originalSwapWindowFuncRef :: IORef (Maybe (FunPtr (Ptr () -> IO ())))
-originalSwapWindowFuncRef = unsafePerformIO $ newIORef Nothing
+-- Import our bridge to call IsVisible from bot_util
+foreign import ccall "isvisible" isvisible :: FunPtr (Ptr ACVec -> Ptr ACVec -> Ptr () -> CBool -> IO CBool)
+                                                -> Ptr ACVec -> Ptr ACVec -> Ptr () -> CBool -> IO CBool
 
 patchClient :: IO ()
 patchClient = do
@@ -114,9 +70,9 @@ patchClient = do
         writeIORef playerEntityPointerRef $ gameModuleBase + Offsets.playerEntityPointer
         writeIORef playerListPointerRef $ gameModuleBase + Offsets.playerListPointer
         writeIORef maxPlayersAddressRef $ gameModuleBase + Offsets.maxPlayers
-        writeIORef isvisibleFunctionAddressRef $ fromIntegral $ gameModuleBase + Offsets.isVisibleFunction
+        writeIORef isvisibleFunctionAddressRef $ gameModuleBase + Offsets.isVisibleFunction
         writeIORef attackFunctionAddressRef $ gameModuleBase + Offsets.attackFunction
-        writeIORef playerInCrosshairFunctionAddressRef $ fromIntegral $ gameModuleBase + Offsets.playerInCrosshairFunction
+        writeIORef playerInCrosshairFunctionAddressRef $ gameModuleBase + Offsets.playerInCrosshairFunction
 
         writeIORef loadedRef True
     return ()
@@ -137,8 +93,8 @@ sdlGLSwapWindowHook windowPtr = do
 
 getLocalPlayerAndAimAddresses :: ProcessID -> IO (Player, (Word, Word))
 getLocalPlayerAndAimAddresses pid = do
-    playerEntityPointer <- readIORef playerEntityPointerRef
-    mPlayerEntityAddress <- Mem.readAddress pid playerEntityPointer
+    playerEntityPointerAddress <- readIORef playerEntityPointerRef
+    mPlayerEntityAddress <- Mem.readAddress pid playerEntityPointerAddress
     case mPlayerEntityAddress of
         Just playerEntityAddress -> do
             let playerHealthAddress = playerEntityAddress + Offsets.playerHealth
@@ -159,8 +115,8 @@ getLocalPlayerAndAimAddresses pid = do
 
             return (Player
                 { _pos = fromMaybe (0,0,0) mPlayerPos
-                , _state = fromMaybe 4 mPlayerState
-                , _team = fromMaybe 4 mPlayerTeam
+                , _state = fromIntegral $ fromMaybe 4 mPlayerState
+                , _team = fromIntegral $ fromMaybe 4 mPlayerTeam
                 , _distance = Nothing
                 , _visible = False
                 , _aimX = fromMaybe 0 mPlayerAimX
@@ -190,11 +146,15 @@ getPlayersList pid localPlayer = do
                             (deltaX, deltaY, _) = deltas (_pos localPlayer) botPos
                             (playerX, playerY, playerZ) = _pos localPlayer
                         isvisibleFunctionAddress <- readIORef isvisibleFunctionAddressRef
-                        botIsVisible <- isvisible isvisibleFunctionAddress (realToFrac playerX) (realToFrac playerY) (realToFrac playerZ) (realToFrac botX) (realToFrac botY) (realToFrac botZ)
+                        playerVecPtr <- malloc
+                        botVecPtr <- malloc
+                        poke playerVecPtr $ ACVec {_x = realToFrac playerX, _y = realToFrac playerY, _z = realToFrac playerZ}
+                        poke botVecPtr $ ACVec {_x = realToFrac botX, _y = realToFrac botY, _z = realToFrac botZ}
+                        botIsVisible <- isvisible (castPtrToFunPtr $ wordPtrToPtr $ WordPtr isvisibleFunctionAddress) playerVecPtr botVecPtr nullPtr 0
                         let bot = Player
                                 { _pos = botPos
-                                , _state = botState
-                                , _team = botTeam
+                                , _state = fromIntegral botState
+                                , _team = fromIntegral botTeam
                                 , _distance = Just $ getDistance (deltaX, deltaY)
                                 , _visible = botIsVisible == 1 -- CBool is just an int
                                 , _aimX = 0 -- We won't use a bot's aim coords for anything
@@ -238,16 +198,15 @@ triggerBot localPlayer = do
     let playerInCrosshairFunPtr = castPtrToFunPtr $ wordPtrToPtr $ WordPtr playerInCrosshairFunctionAddress
     attackFunctionAddress <- readIORef attackFunctionAddressRef
     aimedAtPlayer <- do
-        playerAimedAt <- callPlayerInCrosshair playerInCrosshairFunPtr 
+        playerAimedAt <- playerincrosshair playerInCrosshairFunPtr 
         peek playerAimedAt
-    print aimedAtPlayer
     when (_cpTeam aimedAtPlayer /= -1 && _cpTeam aimedAtPlayer /= fromIntegral (_team localPlayer)) $ do
         -- We put this on a thread and call attack with bot 1 and 0 to enable the player to shoot automatically by holding down m1 if it wants to
         _ <- forkIO $ do
             let attackFunPtr = castPtrToFunPtr $ wordPtrToPtr $ WordPtr attackFunctionAddress
-            callAttack attackFunPtr 1
+            attack attackFunPtr 1
             threadDelay 1
-            callAttack attackFunPtr 0
+            attack attackFunPtr 0
         return ()
 
 botsPointers :: Word -> Word -> Int32 -> [Word]
@@ -357,15 +316,3 @@ closestBot :: [Player] -> Maybe Player
 closestBot ms =
   let candidates = [(p, d) | p <- ms, Just d <- [_distance p]]
   in if null candidates then Nothing else Just (fst (minimumBy (comparing snd) candidates))
-
-data Player
-    = Player
-    { _pos      :: (Float, Float, Float)
-    , _team     :: Int32
-    , _state    :: Int32
-    , _distance :: Maybe Float
-    , _visible  :: Bool
-    , _aimX     :: Float
-    , _aimY     :: Float
-    }
-    deriving Show
