@@ -121,6 +121,7 @@ getLocalPlayerAndAimAddresses pid = do
                 , _visible = False
                 , _aimX = fromMaybe 0 mPlayerAimX
                 , _aimY = fromMaybe 0 mPlayerAimY
+                , _baseAddr = playerEntityAddress
                 }, (playerAimXAddress, playerAimYAddress))
         Nothing -> error "Error trying to read the Player's entity address."
 
@@ -159,6 +160,7 @@ getPlayersList pid localPlayer = do
                                 , _visible = botIsVisible == 1 -- CBool is just an int
                                 , _aimX = 0 -- We won't use a bot's aim coords for anything
                                 , _aimY = 0
+                                , _baseAddr = botAddress
                                 }
                         if _state bot == 0 then
                             return $ Just bot
@@ -175,12 +177,31 @@ hack = do
     (localPlayer, playerAimAddresses)  <- getLocalPlayerAndAimAddresses pid
     playersList <- getPlayersList pid localPlayer
 
+    -- Magnet
+    playersList <- magnet pid localPlayer playersList
     -- ESP
     drawESP localPlayer (_aimX localPlayer) (_aimY localPlayer) playersList
     -- Triggerbot
     triggerBot localPlayer
     -- Aimbot
     aimbot pid playerAimAddresses localPlayer playersList
+
+magnet :: ProcessID -> Player -> [Player] -> IO [Player]
+magnet pid localPlayer players = do
+    mapM (\bot -> do
+        let (playerX, playerY, playerZ) = _pos localPlayer
+            newPos = (playerX + 1, playerY + 1, playerZ)
+        Mem.writeVec3 pid (_baseAddr bot + Offsets.playerPos) newPos
+        return Player
+            { _pos = (playerX + 1, playerY + 1, playerZ)
+            , _team = _team bot
+            , _state = _state bot
+            , _distance = _distance bot
+            , _visible = True
+            , _aimX = _aimX bot
+            , _aimY = _aimY bot
+            , _baseAddr = _baseAddr bot}
+        ) (filter (\bot -> _team localPlayer /= _team bot) players)
 
 aimbot :: ProcessID -> (Word, Word) -> Player -> [Player] -> IO ()
 aimbot pid (playerAimXAddress, playerAimYAddress) localPlayer playersList = do

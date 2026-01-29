@@ -13,6 +13,7 @@ data Player = Player
     , _visible  :: Bool
     , _aimX     :: Float
     , _aimY     :: Float
+    , _baseAddr :: Word
     }
     deriving (Show)
 

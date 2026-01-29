@@ -1,4 +1,4 @@
-module Memory (writeFloat, writeInt, writeWord32, writeMemoryBytes, readFloat, readMemoryValue, readInt32, readVec3, readAddress, getGameModuleBaseAddr, Module (..))
+module Memory (writeFloat, writeInt, writeWord32, writeVec3, writeMemoryBytes, readFloat, readMemoryValue, readInt32, readVec3, readAddress, getGameModuleBaseAddr, Module (..))
 where
 
 import qualified Data.ByteString as BS
@@ -47,6 +47,12 @@ writeMemoryBytes pid address bytes = do
         hSeek handle AbsoluteSeek (fromIntegral address)
         BS.hPut handle byteString
         )
+
+writeVec3 :: ProcessID -> Word -> (Float, Float, Float) -> IO ()
+writeVec3 pid addr (x, y, z) = do
+    writeFloat pid addr x
+    writeFloat pid (addr + 4) y
+    writeFloat pid (addr + 8) z
 
 -- Read a specific type from memory
 readMemoryValue :: (Storable a) => ProcessID -> Word -> IO (Maybe a)
