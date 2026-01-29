@@ -48,3 +48,9 @@ playerName = 0x219
 
 nextBot :: Word
 nextBot = 0x10
+
+codeCave :: Word
+codeCave = 0x134951
+
+dmgSubtract :: Word
+dmgSubtract = 0x2fd1c

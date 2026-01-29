@@ -61,6 +61,19 @@ patchClient = do
         pid <- getProcessID
         gameModuleBase <- getGameModuleBaseAddr $ "/proc/" ++ show pid ++ "/maps"
 
+        -- write far jmp (0xEA) to code cave from dmg subtract
+        --Mem.writeMemoryBytes pid (gameModuleBase + Offsets.dmgSubtract) [0xea, 0x51, 0xa9, 0x53, 0x00]
+        -- wirte near relative jmp 0xE9 to code cave from dmg subtract
+        -- 53a951 - 435d1c = 104c35 - 5 = 104c30
+        Mem.writeMemoryBytes pid (gameModuleBase + Offsets.dmgSubtract) [0xe9, 0x30, 0x4c, 0x10, 0x00]
+
+        -- write original subtract instruction inside code cave
+        Mem.writeMemoryBytes pid (gameModuleBase + Offsets.codeCave) [0x45, 0x29, 0xa6, 0x00, 0x01, 0x00, 0x00]
+
+        -- write near relative jmp (0xE9) back to 0x435d23 inside code cave, 7 bytes offset cuz subtract instruction is 7 bytes
+        -- 0x100000000 - 0x00104C35 = 0xFFEFB3CB - 5 = 0xFFEFB3C6 <- Same offset but backwards/negative
+        Mem.writeMemoryBytes pid ((gameModuleBase + Offsets.codeCave) + 0x7) [0xe9, 0xc6, 0xb3, 0xef, 0xff]
+
         -- Infinite ammo
         Mem.writeMemoryBytes pid (gameModuleBase + Offsets.consumeAmmoInstr) (replicate 3 0x90)
 
@@ -219,7 +232,7 @@ triggerBot localPlayer = do
     let playerInCrosshairFunPtr = castPtrToFunPtr $ wordPtrToPtr $ WordPtr playerInCrosshairFunctionAddress
     attackFunctionAddress <- readIORef attackFunctionAddressRef
     aimedAtPlayer <- do
-        playerAimedAt <- playerincrosshair playerInCrosshairFunPtr 
+        playerAimedAt <- playerincrosshair playerInCrosshairFunPtr
         peek playerAimedAt
     when (_cpTeam aimedAtPlayer /= -1 && _cpTeam aimedAtPlayer /= fromIntegral (_team localPlayer)) $ do
         -- We put this on a thread and call attack with bot 1 and 0 to enable the player to shoot automatically by holding down m1 if it wants to
