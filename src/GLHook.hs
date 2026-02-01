@@ -10,7 +10,6 @@ import Data.Ord (comparing)
 import Data.Maybe (fromMaybe, catMaybes)
 import Graphics.Rendering.OpenGL (Size(..), matrixMode, loadIdentity, HasSetter (($=)), MatrixMode (Projection), ortho, HasGetter (get), viewport, lineWidth, ComparisonFunction (Always), Capability (Enabled), depthFunc, Color (color), Color4 (Color4), renderPrimitive, PrimitiveMode (LineLoop), Vertex2 (Vertex2), Vertex (vertex), preservingMatrix, BlendingFactor (SrcAlpha, OneMinusSrcAlpha), blendFunc, blend)
 import Foreign.C.Types (CBool(..),)
-import Memory (getGameModuleBaseAddr)
 import qualified Offsets
 import GHC.Conc.IO (threadDelay)
 import Control.Concurrent (forkIO)
@@ -31,6 +30,7 @@ import Global
       loadedRef,
       originalSwapWindowFuncRef )
 import Data.IORef ( readIORef, writeIORef )
+import Numeric (showHex)
 
 -- Our SwapWindow hook
 foreign export ccall "sdlGLSwapWindowHook" sdlGLSwapWindowHook :: Ptr () -> IO ()
@@ -54,25 +54,49 @@ foreign export ccall "patchClient" patchClient :: IO ()
 foreign import ccall "isvisible" isvisible :: FunPtr (Ptr ACVec -> Ptr ACVec -> Ptr () -> CBool -> IO CBool)
                                                 -> Ptr ACVec -> Ptr ACVec -> Ptr () -> CBool -> IO CBool
 
+writeCodeCave :: ProcessID -> Word -> Word -> IO ()
+writeCodeCave pid gameModuleBase playerEntityPtr = do
+    -- wirte near relative jmp 0xE9 to code cave from dmg subtract
+    -- 53a951 - 435d1c = 104c35 - 5 = 104c30
+    let jumpOffsetAddr = (gameModuleBase + Offsets.codeCave) - (gameModuleBase + Offsets.dmgSubtract)
+        jumpToBytes    = Mem.wordToLittleEndian $ jumpOffsetAddr - 0x5
+
+    -- 0xe9 = near relative jump
+    -- jumpToCodeCaveBytes = [0x30, 0x4c, 0x10] = ((codeCave (0x53a95) - dmgSubtract (0x435d1c)) - 0x5) -> to LE
+    Mem.writeMemoryBytes pid (gameModuleBase + Offsets.dmgSubtract) $ 0xe9 : jumpToBytes
+
+    mLocalPlayerAddr <- Mem.readAddress pid playerEntityPtr
+    case mLocalPlayerAddr of
+        Just localPlayerAddr -> do
+            let localPlayerAddrBytes = Mem.wordToLittleEndian localPlayerAddr
+
+            -- 0xB8 -> mov | 0x49 REX.WB prefix for R8
+            -- mov r8, localPlayerAddr
+            Mem.writeMemoryBytes pid (gameModuleBase + Offsets.codeCave) $ [0x49, 0xb8] ++ localPlayerAddrBytes
+        Nothing -> return ()
+
+    -- we will compare the address of the attacker with the address of the player
+    -- at this point in time/memory, the attacker address will be on R15 while the player on R8 (we put it there in the previous instruction)
+    -- if we are the ones attacking, then subtract, otherwise don't
+    Mem.writeMemoryBytes pid ((gameModuleBase + Offsets.codeCave) + 0xa) [0x4d, 0x3b, 0xc7]
+
+    -- if the attacker's address on R15 is not the same as the player(on R8), don't subtract health and go back to execution flow at 435d25
+    -- to go backward we subtract our jump offset from 0x100000000.
+    -- write jne back to 435d25(next instruction after our jump to code cave patch on 435d1c)
+    Mem.writeMemoryBytes pid ((gameModuleBase + Offsets.codeCave) + 0xd) $ [0x0f, 0x85] ++ Mem.wordToLittleEndian ((0x100000000 - (jumpOffsetAddr + 0x5)) - 0x5)
+
+    -- write original subtract instruction inside code cave
+    Mem.writeMemoryBytes pid ((gameModuleBase + Offsets.codeCave) + 0x13) [0x45, 0x29, 0xa6, 0x0, 0x01, 0x0, 0x0]
+
+    -- write jmp back to 435d25 to resume execution
+    Mem.writeMemoryBytes pid ((gameModuleBase + Offsets.codeCave) + 0x1a) $ 0xe9 : Mem.wordToLittleEndian ((0x100000000 - (jumpOffsetAddr + 0x11)) - 0x5)
+
 patchClient :: IO ()
 patchClient = do
     _ <- forkIO $ do
         threadDelay 1000000
         pid <- getProcessID
-        gameModuleBase <- getGameModuleBaseAddr $ "/proc/" ++ show pid ++ "/maps"
-
-        -- write far jmp (0xEA) to code cave from dmg subtract
-        --Mem.writeMemoryBytes pid (gameModuleBase + Offsets.dmgSubtract) [0xea, 0x51, 0xa9, 0x53, 0x00]
-        -- wirte near relative jmp 0xE9 to code cave from dmg subtract
-        -- 53a951 - 435d1c = 104c35 - 5 = 104c30
-        Mem.writeMemoryBytes pid (gameModuleBase + Offsets.dmgSubtract) [0xe9, 0x30, 0x4c, 0x10, 0x00]
-
-        -- write original subtract instruction inside code cave
-        Mem.writeMemoryBytes pid (gameModuleBase + Offsets.codeCave) [0x45, 0x29, 0xa6, 0x00, 0x01, 0x00, 0x00]
-
-        -- write near relative jmp (0xE9) back to 0x435d23 inside code cave, 7 bytes offset cuz subtract instruction is 7 bytes
-        -- 0x100000000 - 0x00104C35 = 0xFFEFB3CB - 5 = 0xFFEFB3C6 <- Same offset but backwards/negative
-        Mem.writeMemoryBytes pid ((gameModuleBase + Offsets.codeCave) + 0x7) [0xe9, 0xc6, 0xb3, 0xef, 0xff]
+        gameModuleBase <- Mem.getGameModuleBaseAddr $ "/proc/" ++ show pid ++ "/maps"
 
         -- Infinite ammo
         Mem.writeMemoryBytes pid (gameModuleBase + Offsets.consumeAmmoInstr) (replicate 3 0x90)
@@ -86,6 +110,8 @@ patchClient = do
         writeIORef isvisibleFunctionAddressRef $ gameModuleBase + Offsets.isVisibleFunction
         writeIORef attackFunctionAddressRef $ gameModuleBase + Offsets.attackFunction
         writeIORef playerInCrosshairFunctionAddressRef $ gameModuleBase + Offsets.playerInCrosshairFunction
+
+        writeCodeCave pid gameModuleBase $ gameModuleBase + Offsets.playerEntityPointer
 
         writeIORef loadedRef True
     return ()
@@ -151,6 +177,8 @@ getPlayersList pid localPlayer = do
                 mBotAddress <- Mem.readAddress pid botPointer
                 case mBotAddress of
                     Just botAddress -> do
+                        print $ "botaddress: " ++ showHex botAddress ""
+                        print $ "player address: " ++ showHex (_baseAddr localPlayer) ""
                         mBotState <- Mem.readInt32 pid (botAddress + Offsets.playerState)
                         mBotPos <- Mem.readVec3 pid (botAddress + Offsets.playerPos)
                         mBotTeam <- Mem.readInt32 pid (botAddress + Offsets.playerTeam)

@@ -1,4 +1,4 @@
-module Memory (writeFloat, writeInt, writeWord32, writeVec3, writeMemoryBytes, readFloat, readMemoryValue, readInt32, readVec3, readAddress, getGameModuleBaseAddr, Module (..))
+module Memory (writeFloat, writeInt, writeWord32, writeVec3, writeMemoryBytes, readFloat, readMemoryValue, readInt32, readVec3, readAddress, wordToLittleEndian, getGameModuleBaseAddr, Module (..))
 where
 
 import qualified Data.ByteString as BS
@@ -16,6 +16,8 @@ import GHC.IO.Handle.FD (withBinaryFile)
 import GHC.IO.IOMode (IOMode (ReadMode, WriteMode))
 import Numeric (readHex)
 import System.Posix (ProcessID)
+import Data.Bits (FiniteBits (finiteBitSize), Bits (shiftR, (.&.)))
+import Data.List (unfoldr)
 
 writeFloat :: ProcessID -> Word -> Float -> IO ()
 writeFloat = writeMemoryValue
@@ -100,6 +102,18 @@ readVec3 pid addr = do
     case (mbX, mbY, mbZ) of
         (Just x, Just y, Just z) -> return $ Just (x, y, z)
         _ -> return Nothing
+
+wordToLittleEndian :: (FiniteBits a, Integral a) => a -> [Word8]
+wordToLittleEndian w =
+    unfoldr go 0
+  where
+    totalBytes = finiteBitSize w `div` 8
+    go i
+        | i < totalBytes =
+            let shiftAmount = i * 8
+                byte = fromIntegral $ (w `shiftR` shiftAmount) .&. 0xFF
+            in Just (byte, i + 1)
+        | otherwise = Nothing
 
 
 -- remove what's below this line and move it to main, it's only called one time, no real need to have it as a function
