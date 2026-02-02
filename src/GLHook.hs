@@ -9,7 +9,7 @@ import qualified Memory as Mem
 import Data.Ord (comparing)
 import Data.Maybe (fromMaybe, catMaybes)
 import Graphics.Rendering.OpenGL (Size(..), matrixMode, loadIdentity, HasSetter (($=)), MatrixMode (Projection), ortho, HasGetter (get), viewport, lineWidth, ComparisonFunction (Always), Capability (Enabled), depthFunc, Color (color), Color4 (Color4), renderPrimitive, PrimitiveMode (LineLoop), Vertex2 (Vertex2), Vertex (vertex), preservingMatrix, BlendingFactor (SrcAlpha, OneMinusSrcAlpha), blendFunc, blend)
-import Foreign.C.Types (CBool(..),)
+import Foreign.C.Types (CBool(..), CInt(..),)
 import qualified Offsets
 import GHC.Conc.IO (threadDelay)
 import Control.Concurrent (forkIO)
@@ -28,7 +28,7 @@ import Global
       attackFunctionAddressRef,
       playerInCrosshairFunctionAddressRef,
       loadedRef,
-      originalSwapWindowFuncRef )
+      originalSwapWindowFuncRef, dokillFunctionAddressRef )
 import Data.IORef ( readIORef, writeIORef )
 import Numeric (showHex)
 
@@ -46,6 +46,10 @@ foreign import ccall "dynamic"
 -- Call to function pointer for AC's playerincrosshair
 foreign import ccall "dynamic"
     playerincrosshair :: FunPtr (IO (Ptr ACPlayer)) -> IO (Ptr ACPlayer)
+
+-- Call to function pointer for AC's dokill
+foreign import ccall "dynamic"
+    dokill :: FunPtr (Ptr ACPlayer -> Ptr ACPlayer -> CBool -> CInt -> IO ()) -> Ptr ACPlayer -> Ptr ACPlayer -> CBool -> CInt -> IO ()
 
 -- patchClient
 foreign export ccall "patchClient" patchClient :: IO ()
@@ -220,6 +224,9 @@ hack = do
     (localPlayer, playerAimAddresses)  <- getLocalPlayerAndAimAddresses pid
     playersList <- getPlayersList pid localPlayer
 
+    -- Sight-kill - Never heard of this before so this is the name I came up with
+    --  instantly kills whatever enemy crosses my crosshair
+    sightKill localPlayer
     -- Magnet
     playersList <- magnet pid localPlayer playersList
     -- ESP
@@ -228,6 +235,19 @@ hack = do
     triggerBot localPlayer
     -- Aimbot
     aimbot pid playerAimAddresses localPlayer playersList
+
+sightKill :: Player -> IO ()
+sightKill localPlayer = do
+    dokillFunctionAddress <- readIORef dokillFunctionAddressRef
+    playerInCrosshairFunctionAddress <- readIORef playerInCrosshairFunctionAddressRef
+    let dokillFunPtr = castPtrToFunPtr $ wordPtrToPtr $ WordPtr dokillFunctionAddress
+        playerInCrosshairFunPtr = castPtrToFunPtr $ wordPtrToPtr $ WordPtr playerInCrosshairFunctionAddress
+        playerEntityPtr = wordPtrToPtr $ WordPtr (_baseAddr localPlayer)
+    playerAimedAtPtr <- playerincrosshair playerInCrosshairFunPtr
+    playerAimedAt <- peek playerAimedAtPtr
+    -- _cpTeam comes as -1 when no player is in crosshair, we need to make sure we're passing valid ptrs to dokill otherwise the game crashes
+    when (_cpTeam playerAimedAt /= -1 && fromIntegral (_cpTeam playerAimedAt) /= _team localPlayer) $ do
+        dokill dokillFunPtr playerAimedAtPtr playerEntityPtr 0 0
 
 magnet :: ProcessID -> Player -> [Player] -> IO [Player]
 magnet pid localPlayer players = do
@@ -262,8 +282,8 @@ triggerBot localPlayer = do
     let playerInCrosshairFunPtr = castPtrToFunPtr $ wordPtrToPtr $ WordPtr playerInCrosshairFunctionAddress
     attackFunctionAddress <- readIORef attackFunctionAddressRef
     aimedAtPlayer <- do
-        playerAimedAt <- playerincrosshair playerInCrosshairFunPtr
-        peek playerAimedAt
+        playerAimedAtPtr <- playerincrosshair playerInCrosshairFunPtr
+        peek playerAimedAtPtr
     when (_cpTeam aimedAtPlayer /= -1 && _cpTeam aimedAtPlayer /= fromIntegral (_team localPlayer)) $ do
         -- We put this on a thread and call attack with bot 1 and 0 to enable the player to shoot automatically by holding down m1 if it wants to
         _ <- forkIO $ do

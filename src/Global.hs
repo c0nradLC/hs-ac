@@ -28,6 +28,10 @@ attackFunctionAddressRef = unsafePerformIO $ newIORef 0x0
 playerInCrosshairFunctionAddressRef :: IORef Word
 playerInCrosshairFunctionAddressRef = unsafePerformIO $ newIORef 0x0
 
+{-# NOINLINE dokillFunctionAddressRef #-}
+dokillFunctionAddressRef :: IORef Word
+dokillFunctionAddressRef = unsafePerformIO $ newIORef 0x0
+
 {-# NOINLINE loadedRef #-}
 loadedRef :: IORef Bool
 loadedRef = unsafePerformIO $ newIORef False

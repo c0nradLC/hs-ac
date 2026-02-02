@@ -54,3 +54,6 @@ codeCave = 0x134951
 
 dmgSubtract :: Word
 dmgSubtract = 0x2fd1c
+
+doKillFunction :: Word
+doKillFunction = 0x2fe20
