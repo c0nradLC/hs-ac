@@ -54,8 +54,34 @@ foreign export ccall "patchClient" patchClient :: IO ()
 foreign import ccall "isvisible" isvisible :: FunPtr (Ptr ACVec -> Ptr ACVec -> Ptr () -> CBool -> IO CBool)
                                                 -> Ptr ACVec -> Ptr ACVec -> Ptr () -> CBool -> IO CBool
 
-writeCodeCave :: ProcessID -> Word -> Word -> IO ()
-writeCodeCave pid gameModuleBase playerEntityPtr = do
+patchClient :: IO ()
+patchClient = do
+    _ <- forkIO $ do
+        threadDelay 1000000
+        pid <- getProcessID
+        gameModuleBase <- Mem.getGameModuleBaseAddr $ "/proc/" ++ show pid ++ "/maps"
+
+        -- Infinite ammo
+        Mem.writeMemoryBytes pid (gameModuleBase + Offsets.consumeAmmoInstr) (replicate 3 0x90)
+
+        -- NoSpread, NoRecoil and NoKickback (No AttackPhysics function call when shooting)
+        Mem.writeMemoryBytes pid (gameModuleBase + Offsets.attackPhysicsFunction) (replicate 1 0xc3)
+
+        writeIORef playerEntityPointerRef $ gameModuleBase + Offsets.playerEntityPointer
+        writeIORef playerListPointerRef $ gameModuleBase + Offsets.playerListPointer
+        writeIORef maxPlayersAddressRef $ gameModuleBase + Offsets.maxPlayers
+        writeIORef isvisibleFunctionAddressRef $ gameModuleBase + Offsets.isVisibleFunction
+        writeIORef attackFunctionAddressRef $ gameModuleBase + Offsets.attackFunction
+        writeIORef playerInCrosshairFunctionAddressRef $ gameModuleBase + Offsets.playerInCrosshairFunction
+        writeIORef dokillFunctionAddressRef $ gameModuleBase + Offsets.doKillFunction
+
+        patchGodMode pid gameModuleBase $ gameModuleBase + Offsets.playerEntityPointer
+
+        writeIORef loadedRef True
+    return ()
+
+patchGodMode :: ProcessID -> Word -> Word -> IO ()
+patchGodMode pid gameModuleBase playerEntityPtr = do
     -- wirte near relative jmp 0xE9 to code cave from dmg subtract
     -- 53a951 - 435d1c = 104c35 - 5 = 104c30
     let jumpOffsetAddr = (gameModuleBase + Offsets.codeCave) - (gameModuleBase + Offsets.dmgSubtract)
@@ -85,36 +111,12 @@ writeCodeCave pid gameModuleBase playerEntityPtr = do
     -- write jne back to 435d25(next instruction after our jump to code cave patch on 435d1c)
     Mem.writeMemoryBytes pid ((gameModuleBase + Offsets.codeCave) + 0xd) $ [0x0f, 0x85] ++ Mem.wordToLittleEndian ((0x100000000 - (jumpOffsetAddr + 0x5)) - 0x5)
 
-    -- write original subtract instruction inside code cave
-    Mem.writeMemoryBytes pid ((gameModuleBase + Offsets.codeCave) + 0x13) [0x45, 0x29, 0xa6, 0x0, 0x01, 0x0, 0x0]
+    -- write dmg health subtract with an absurd amount inside code cave
+    -- 0xffff0000 = 4294901760 if my math is correct, aint no one surviving that
+    Mem.writeMemoryBytes pid ((gameModuleBase + Offsets.codeCave) + 0x13) [0x41, 0x81, 0xae, 0x0, 0x01, 0x0, 0x0, 0xff, 0xff, 0x0, 0x0]
 
     -- write jmp back to 435d25 to resume execution
-    Mem.writeMemoryBytes pid ((gameModuleBase + Offsets.codeCave) + 0x1a) $ 0xe9 : Mem.wordToLittleEndian ((0x100000000 - (jumpOffsetAddr + 0x11)) - 0x5)
-
-patchClient :: IO ()
-patchClient = do
-    _ <- forkIO $ do
-        threadDelay 1000000
-        pid <- getProcessID
-        gameModuleBase <- Mem.getGameModuleBaseAddr $ "/proc/" ++ show pid ++ "/maps"
-
-        -- Infinite ammo
-        Mem.writeMemoryBytes pid (gameModuleBase + Offsets.consumeAmmoInstr) (replicate 3 0x90)
-
-        -- NoSpread, NoRecoil and NoKickback (No AttackPhysics function call when shooting)
-        Mem.writeMemoryBytes pid (gameModuleBase + Offsets.attackPhysicsFunction) (replicate 1 0xc3)
-
-        writeIORef playerEntityPointerRef $ gameModuleBase + Offsets.playerEntityPointer
-        writeIORef playerListPointerRef $ gameModuleBase + Offsets.playerListPointer
-        writeIORef maxPlayersAddressRef $ gameModuleBase + Offsets.maxPlayers
-        writeIORef isvisibleFunctionAddressRef $ gameModuleBase + Offsets.isVisibleFunction
-        writeIORef attackFunctionAddressRef $ gameModuleBase + Offsets.attackFunction
-        writeIORef playerInCrosshairFunctionAddressRef $ gameModuleBase + Offsets.playerInCrosshairFunction
-
-        writeCodeCave pid gameModuleBase $ gameModuleBase + Offsets.playerEntityPointer
-
-        writeIORef loadedRef True
-    return ()
+    Mem.writeMemoryBytes pid ((gameModuleBase + Offsets.codeCave) + 0x1e) $ 0xe9 : Mem.wordToLittleEndian ((0x100000000 - (jumpOffsetAddr + 0x15)) - 0x5)
 
 sdlGLSwapWindowHook :: Ptr () -> IO ()
 sdlGLSwapWindowHook windowPtr = do
