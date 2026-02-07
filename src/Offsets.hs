@@ -1,5 +1,4 @@
-module Offsets
-where
+module Offsets where
 
 playerEntityPointer :: Word
 playerEntityPointer = 0x19d518
