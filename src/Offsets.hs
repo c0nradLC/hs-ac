@@ -25,7 +25,7 @@ attackFunction = 0x78610
 playerInCrosshairFunction :: Word
 playerInCrosshairFunction = 0xf7780
 
-playerHealth :: Word 
+playerHealth :: Word
 playerHealth = 0x100
 
 playerPos :: Word
@@ -38,7 +38,7 @@ playerAimX :: Word
 playerAimX = 0x38
 
 playerTeam :: Word
-playerTeam =  0x320
+playerTeam = 0x320
 
 playerState :: Word
 playerState = 0x32C

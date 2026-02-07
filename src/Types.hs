@@ -1,18 +1,20 @@
-module Types(Player(..), ACPlayer(..), ACVec(..)) where
-import Foreign.C ( CFloat, CInt )
-import Foreign
-    ( nullPtr,
-      Storable(pokeByteOff, peekByteOff, poke, peek, sizeOf, alignment) )
+module Types (Player (..), ACPlayer (..), ACVec (..)) where
+
+import Foreign (
+    Storable (alignment, peek, peekByteOff, poke, pokeByteOff, sizeOf),
+    nullPtr,
+ )
+import Foreign.C (CFloat, CInt)
 import qualified Offsets
 
 data Player = Player
-    { _pos      :: (Float, Float, Float)
-    , _team     :: Int
-    , _state    :: Int
+    { _pos :: (Float, Float, Float)
+    , _team :: Int
+    , _state :: Int
     , _distance :: Maybe Float
-    , _visible  :: Bool
-    , _aimX     :: Float
-    , _aimY     :: Float
+    , _visible :: Bool
+    , _aimX :: Float
+    , _aimY :: Float
     , _baseAddr :: Word
     }
     deriving (Show)
@@ -27,11 +29,12 @@ instance Storable ACPlayer where
     alignment _ = alignment (undefined :: CInt)
 
     peek ptr = do
-        if ptr == nullPtr then do
-            return ACPlayer {_cpTeam = -1}
-        else do
-            team <- peekByteOff ptr $ fromIntegral Offsets.playerTeam
-            return ACPlayer {_cpTeam = team}
+        if ptr == nullPtr
+            then do
+                return ACPlayer{_cpTeam = -1}
+            else do
+                team <- peekByteOff ptr $ fromIntegral Offsets.playerTeam
+                return ACPlayer{_cpTeam = team}
 
     -- no poke definition because we won't be updating the playerent from Haskell
     poke _ _ = return ()

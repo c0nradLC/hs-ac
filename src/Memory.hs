@@ -1,8 +1,9 @@
-module Memory (writeFloat, writeInt, writeWord32, writeVec3, writeMemoryBytes, readFloat, readMemoryValue, readInt32, readVec3, readAddress, wordToLittleEndian, getGameModuleBaseAddr, Module (..))
+module Memory (writeFloat, writeInt, writeWord32, writeVec3, writeBytes, readFloat, readMemoryValue, readInt32, readVec3, readAddress, wordToLittleEndian, getGameModuleBaseAddr, Module (..))
 where
 
+import Data.Bits (Bits (shiftR, (.&.)), FiniteBits (finiteBitSize))
 import qualified Data.ByteString as BS
-import Data.List (isInfixOf, find)
+import Data.List (find, isInfixOf, unfoldr)
 import Data.Text (pack, split, unpack)
 import Data.Word (Word32, Word8)
 import Foreign (
@@ -16,8 +17,6 @@ import GHC.IO.Handle.FD (withBinaryFile)
 import GHC.IO.IOMode (IOMode (ReadMode, WriteMode))
 import Numeric (readHex)
 import System.Posix (ProcessID)
-import Data.Bits (FiniteBits (finiteBitSize), Bits (shiftR, (.&.)))
-import Data.List (unfoldr)
 
 writeFloat :: ProcessID -> Word -> Float -> IO ()
 writeFloat = writeMemoryValue
@@ -35,19 +34,25 @@ writeMemoryValue pid address val = do
         poke ptr val
         BS.packCStringLen (castPtr ptr, sizeOf val)
 
-    withBinaryFile memPath WriteMode (\handle -> do
-        hSeek handle AbsoluteSeek (fromIntegral address)
-        BS.hPut handle bytes
+    withBinaryFile
+        memPath
+        WriteMode
+        ( \handle -> do
+            hSeek handle AbsoluteSeek (fromIntegral address)
+            BS.hPut handle bytes
         )
 
-writeMemoryBytes :: ProcessID -> Word -> [Word8] -> IO ()
-writeMemoryBytes pid address bytes = do
+writeBytes :: ProcessID -> Word -> [Word8] -> IO ()
+writeBytes pid address bytes = do
     let memPath = "/proc/" ++ show pid ++ "/mem"
     let byteString = BS.pack bytes
 
-    withBinaryFile memPath WriteMode (\handle -> do
-        hSeek handle AbsoluteSeek (fromIntegral address)
-        BS.hPut handle byteString
+    withBinaryFile
+        memPath
+        WriteMode
+        ( \handle -> do
+            hSeek handle AbsoluteSeek (fromIntegral address)
+            BS.hPut handle byteString
         )
 
 writeVec3 :: ProcessID -> Word -> (Float, Float, Float) -> IO ()
@@ -60,16 +65,20 @@ writeVec3 pid addr (x, y, z) = do
 readMemoryValue :: (Storable a) => ProcessID -> Word -> IO (Maybe a)
 readMemoryValue pid address = do
     let memPath = "/proc/" ++ show pid ++ "/mem"
-    mbBytes <- withBinaryFile memPath ReadMode (\handle -> do
-        let size = sizeOf (undefined :: Word)
-        hSeek handle AbsoluteSeek (fromIntegral address)
-        content <- BS.hGet handle size
-        hClose handle
-        return $
-            if BS.length content == size
-                then Just content
-                else Nothing
-        )
+    mbBytes <-
+        withBinaryFile
+            memPath
+            ReadMode
+            ( \handle -> do
+                let size = sizeOf (undefined :: Word)
+                hSeek handle AbsoluteSeek (fromIntegral address)
+                content <- BS.hGet handle size
+                hClose handle
+                return $
+                    if BS.length content == size
+                        then Just content
+                        else Nothing
+            )
     case mbBytes of
         Just bytes ->
             if BS.length bytes == sizeOf (undefined :: Word)
@@ -77,8 +86,9 @@ readMemoryValue pid address = do
                     Just <$> byteStringToValue bytes
                 else return Nothing
         Nothing -> return Nothing
-    where byteStringToValue bs =
-            BS.useAsCString bs $ \cstr ->
+  where
+    byteStringToValue bs =
+        BS.useAsCString bs $ \cstr ->
             peek (castPtr cstr)
 
 -- Read an Int32 value
@@ -112,11 +122,8 @@ wordToLittleEndian w =
         | i < totalBytes =
             let shiftAmount = i * 8
                 byte = fromIntegral $ (w `shiftR` shiftAmount) .&. 0xFF
-            in Just (byte, i + 1)
+             in Just (byte, i + 1)
         | otherwise = Nothing
-
-
--- remove what's below this line and move it to main, it's only called one time, no real need to have it as a function
 
 getGameModuleBaseAddr :: FilePath -> IO Word
 getGameModuleBaseAddr fp = do
