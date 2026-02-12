@@ -27,6 +27,10 @@ playerListPointerRef = unsafePerformIO $ newIORef 0x0
 maxPlayersAddressRef :: IORef Word
 maxPlayersAddressRef = unsafePerformIO $ newIORef 0x0
 
+{-# NOINLINE gameModeAddressRef #-}
+gameModeAddressRef :: IORef Word
+gameModeAddressRef = unsafePerformIO $ newIORef 0x0
+
 {-# NOINLINE isVisibleFunPtrRef #-}
 isVisibleFunPtrRef :: IORef (FunPtr (Ptr ACVec -> Ptr ACVec -> Ptr () -> CBool -> IO CBool))
 isVisibleFunPtrRef = unsafePerformIO $ newIORef nullFunPtr
@@ -55,3 +59,37 @@ loadedRef = unsafePerformIO $ newIORef False
 {-# NOINLINE originalSwapWindowFuncRef #-}
 originalSwapWindowFuncRef :: IORef (Maybe (FunPtr (Ptr () -> IO ())))
 originalSwapWindowFuncRef = unsafePerformIO $ newIORef Nothing
+
+-- all the hack features/modes
+
+{-# NOINLINE infiniteammoRef #-}
+infiniteammoRef :: IORef Bool
+infiniteammoRef = unsafePerformIO $ newIORef False
+
+{-# NOINLINE noattackphysicsRef #-}
+noattackphysicsRef :: IORef Bool
+noattackphysicsRef = unsafePerformIO $ newIORef False
+
+{-# NOINLINE godModeRef #-}
+godModeRef :: IORef Bool
+godModeRef = unsafePerformIO $ newIORef False
+
+{-# NOINLINE magnetRef #-}
+magnetRef :: IORef Bool
+magnetRef = unsafePerformIO $ newIORef False
+
+{-# NOINLINE sightKillRef #-}
+sightKillRef :: IORef Bool
+sightKillRef = unsafePerformIO $ newIORef False
+
+{-# NOINLINE espRef #-}
+espRef :: IORef Bool
+espRef = unsafePerformIO $ newIORef False
+
+{-# NOINLINE triggerbotRef #-}
+triggerbotRef :: IORef Bool
+triggerbotRef = unsafePerformIO $ newIORef False
+
+{-# NOINLINE aimbotRef #-}
+aimbotRef :: IORef Bool
+aimbotRef = unsafePerformIO $ newIORef False

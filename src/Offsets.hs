@@ -9,6 +9,9 @@ playerListPointer = 0x19d520
 maxPlayers :: Word
 maxPlayers = 0x19d52C
 
+gameMode :: Word
+gameMode = 0x19d364
+
 consumeAmmoInstr :: Word
 consumeAmmoInstr = 0xfd06e
 

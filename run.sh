@@ -1,2 +1,2 @@
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$PWD &&
-LD_PRELOAD=$PWD/libachook.so $1
+GIMME=$1 LD_PRELOAD=$PWD/libachook.so $2

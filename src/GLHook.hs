@@ -1,5 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module GLHook where
 
@@ -36,7 +37,7 @@ import Global
     playerEntityPointerRef,
     playerInCrosshairFunPtrRef,
     playerInCrosshairPtrRef,
-    playerListPointerRef,
+    playerListPointerRef, magnetRef, sightKillRef, espRef, aimbotRef, triggerbotRef, infiniteammoRef, noattackphysicsRef, godModeRef, gameModeAddressRef,
   )
 import Graphics.Rendering.OpenGL (BlendingFactor (OneMinusSrcAlpha, SrcAlpha), Capability (Enabled), Color (color), Color4 (Color4), ComparisonFunction (Always), HasGetter (get), HasSetter (($=)), MatrixMode (Projection), PrimitiveMode (LineLoop), Size (..), Vertex (vertex), Vertex2 (Vertex2), blend, blendFunc, depthFunc, lineWidth, loadIdentity, matrixMode, ortho, preservingMatrix, renderPrimitive, viewport)
 import qualified Memory as Mem
@@ -44,6 +45,8 @@ import qualified Offsets
 import System.Posix (ProcessID, RTLDFlags (RTLD_GLOBAL, RTLD_LAZY), dlopen, dlsym)
 import System.Posix.Process (getProcessID)
 import Types (ACPlayer (..), ACVec (..), Player (..))
+import System.Environment (lookupEnv)
+import Data.Text (split, pack, toLower, Text)
 
 -- Our SwapWindow hook
 foreign export ccall "sdlGLSwapWindowHook" sdlGLSwapWindowHook :: Ptr () -> IO ()
@@ -77,6 +80,27 @@ foreign import ccall "isvisible"
 -- patchClient
 foreign export ccall "patchClient" patchClient :: IO ()
 
+parseHackModes :: [Text] -> IO ()
+parseHackModes modes = do
+  writeIORef infiniteammoRef ("infiniteammo" `elem` modes)
+  writeIORef noattackphysicsRef ("noattackphysics" `elem` modes)
+  writeIORef godModeRef ("godmode" `elem` modes)
+  writeIORef magnetRef ("magnet" `elem` modes)
+  writeIORef triggerbotRef ("triggerbot" `elem` modes)
+  writeIORef aimbotRef ("aimbot" `elem` modes)
+  writeIORef espRef ("esp" `elem` modes)
+  writeIORef sightKillRef ("sight" `elem` modes)
+
+  when ("all" `elem` modes || null modes) $ do
+    writeIORef infiniteammoRef True
+    writeIORef noattackphysicsRef True
+    writeIORef godModeRef True
+    writeIORef magnetRef True
+    writeIORef triggerbotRef True
+    writeIORef aimbotRef True
+    writeIORef espRef True
+    writeIORef sightKillRef True
+
 -- loads all the refs (static addresses) and patches the binary, what's in here gets called only once on startup after 1 second
 patchClient :: IO ()
 patchClient = do
@@ -85,17 +109,21 @@ patchClient = do
     pid <- getProcessID
     gameModuleBaseAddr <- Mem.getGameModuleBaseAddr $ "/proc/" ++ show pid ++ "/maps"
 
+    -- modes available: all, infiniteammo, noattackphysics, godmode, magnet, triggerbot, aimbot, esp, sight
+    hackModes <- split (== ',') . toLower . pack . fromMaybe "" <$> lookupEnv "GIMME"
+    parseHackModes hackModes
+
     -- write static addresses and function ptrs to IORef
     loadRefs pid gameModuleBaseAddr
 
     -- Infinite ammo
-    Mem.writeBytes pid (gameModuleBaseAddr + Offsets.consumeAmmoInstr) (replicate 3 0x90)
+    readIORef infiniteammoRef >>= \active -> when active $ Mem.writeBytes pid (gameModuleBaseAddr + Offsets.consumeAmmoInstr) (replicate 3 0x90)
 
     -- NoSpread, NoRecoil and NoKickback (No AttackPhysics function call when shooting)
-    Mem.writeBytes pid (gameModuleBaseAddr + Offsets.attackPhysicsFunction) (replicate 1 0xc3)
+    readIORef noattackphysicsRef >>= \active -> when active $ Mem.writeBytes pid (gameModuleBaseAddr + Offsets.attackPhysicsFunction) (replicate 1 0xc3)
 
     -- Code cave for god-mode, this makes the player not receive damage and also deal an absurd amount of damage
-    patchGodMode pid gameModuleBaseAddr $ gameModuleBaseAddr + Offsets.playerEntityPointer
+    readIORef godModeRef >>= \active -> when active $ patchGodMode pid gameModuleBaseAddr $ gameModuleBaseAddr + Offsets.playerEntityPointer
 
     writeIORef loadedRef True
   return ()
@@ -114,6 +142,7 @@ loadRefs pid gameModuleBaseAddr = do
 
   writeIORef playerListPointerRef $ gameModuleBaseAddr + Offsets.playerListPointer
   writeIORef maxPlayersAddressRef $ gameModuleBaseAddr + Offsets.maxPlayers
+  writeIORef gameModeAddressRef $ gameModuleBaseAddr + Offsets.gameMode
 
   -- function ptrs
   writeIORef isVisibleFunPtrRef $ castPtrToFunPtr $ wordPtrToPtr $ WordPtr $ gameModuleBaseAddr + Offsets.isVisibleFunction
@@ -131,6 +160,7 @@ loadRefs pid gameModuleBaseAddr = do
 --  (btw the victim/attackee address will be in r14 at this point in execution)
 --  then we write a jump back to the next instruction after the health subtraction instruction(0x435d25).
 --  this was the funniest feature to implement and also the one that taught me the most
+-- TODO: disable damage when attacking a team mate
 patchGodMode :: ProcessID -> Word -> Word -> IO ()
 patchGodMode pid gameModuleBase playerEntityPtr = do
   -- wirte near relative jmp 0xE9 to code cave from dmg subtract
@@ -196,9 +226,15 @@ getLocalPlayer pid = do
     Just playerEntityAddress -> do
       playerState <- fromIntegral . fromMaybe 4 <$> Mem.readInt32 pid (playerEntityAddress + Offsets.playerState)
       playerPos <- fromMaybe (0, 0, 0) <$> Mem.readVec3 pid (playerEntityAddress + Offsets.playerPos)
-      playerTeam <- fromIntegral . fromMaybe 4 <$> Mem.readInt32 pid (playerEntityAddress + Offsets.playerTeam)
       playerAimX <- fromMaybe 0 <$> (readIORef playerAimXAddressRef >>= Mem.readFloat pid)
       playerAimY <- fromMaybe 0 <$> (readIORef playerAimYAddressRef >>= Mem.readFloat pid)
+
+      -- in a DeathMatch there are still two different teams, so we need to set the player's team to be different
+      -- from everyone else's so every other player gets to be an enemy
+      isDeathMatch <- isDeathMatchGameMode . fromMaybe 99 <$> (readIORef gameModeAddressRef >>= Mem.readInt32 pid)
+      playerTeam <-
+        if isDeathMatch then return 4 
+        else fromIntegral . fromMaybe 4 <$> Mem.readInt32 pid (playerEntityAddress + Offsets.playerTeam)
 
       return
         ( Player
@@ -283,23 +319,23 @@ hack = do
   playersList <- getPlayersList pid (_pos localPlayer)
 
   -- Magnet
-  playersList <- magnet pid localPlayer playersList
+  playersList <- readIORef magnetRef >>= \active -> if active then magnet pid localPlayer playersList else return playersList
 
   -- call playerincrosshair and store the player ptr in IORef
   readIORef playerInCrosshairFunPtrRef >>= playerincrosshair >>= writeIORef playerInCrosshairPtrRef
 
   -- Sight-kill - Never heard of this before so this is the name I came up with
   --  instantly kills whatever enemy crosses my crosshair
-  sightKill localPlayer
+  readIORef sightKillRef >>= \active -> when active $ sightKill localPlayer
 
   -- ESP
-  drawESP localPlayer (_aimX localPlayer) (_aimY localPlayer) playersList
+  readIORef espRef >>= \active -> when active $ drawESP localPlayer (_aimX localPlayer) (_aimY localPlayer) playersList
 
   -- Triggerbot
-  triggerBot localPlayer
+  readIORef triggerbotRef >>= \active -> when active $ triggerBot localPlayer
 
   -- Aimbot
-  aimbot pid localPlayer playersList
+  readIORef aimbotRef >>= \active -> when active $ aimbot pid localPlayer playersList
 
 -- reads the player ptr obtained by calling playerincrosshair and checks if the target player belongs to a different team
 --  if true then calls dokill, otherwise do nothing
@@ -315,6 +351,8 @@ sightKill localPlayer = do
           >>= \playerAimedAtPtr -> dokill dokillFunPtr playerAimedAtPtr (wordPtrToPtr $ WordPtr (_baseAddr localPlayer)) 1 0
 
 -- maps the player list and updates the position of enemy players/bots to be equal to the players position with a 1 unit difference
+-- TODO: make bots appear on player's crosshair
+-- TODO: fix bug that makes player unable to hold down m1 to shoot automatically when this is enabled
 magnet :: ProcessID -> Player -> [Player] -> IO [Player]
 magnet pid localPlayer players = do
   mapM
@@ -439,3 +477,6 @@ closestBot :: [Player] -> Maybe Player
 closestBot ms =
   let candidates = [(p, d) | p <- ms, Just d <- [_distance p]]
    in if null candidates then Nothing else Just (fst (minimumBy (comparing snd) candidates))
+
+isDeathMatchGameMode :: Int32 -> Bool
+isDeathMatchGameMode gameMode = gameMode == 8
