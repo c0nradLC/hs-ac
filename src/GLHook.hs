@@ -110,7 +110,7 @@ patchClient = do
     gameModuleBaseAddr <- Mem.getGameModuleBaseAddr $ "/proc/" ++ show pid ++ "/maps"
 
     -- modes available: all, infiniteammo, noattackphysics, godmode, magnet, triggerbot, aimbot, esp, sight
-    hackModes <- split (== ',') . toLower . pack . fromMaybe "" <$> lookupEnv "GIMME"
+    hackModes <- split (== ',') . toLower . pack . fromMaybe "all" <$> lookupEnv "GIMME"
     parseHackModes hackModes
 
     -- write static addresses and function ptrs to IORef
@@ -150,17 +150,18 @@ loadRefs pid gameModuleBaseAddr = do
   writeIORef playerInCrosshairFunPtrRef $ castPtrToFunPtr $ wordPtrToPtr $ WordPtr $ gameModuleBaseAddr + Offsets.playerInCrosshairFunction
   writeIORef dokillFunPtrRef $ castPtrToFunPtr $ wordPtrToPtr $ WordPtr $ gameModuleBaseAddr + Offsets.doKillFunction
 
--- our god-mode patch, this makes us the only ones able to deal damage(or to subtract a player's health, to be more precise)
---  this patches the health subtraction instruction(0x435d1c) to jump to our code cave at 0x53a951
---  inside our code cave, we store our localPlayer address on the R8 register with: movabs r8, 0x<player-heap-address>
---  then we write a compare(cmp) between R15 and R8, at this point in execution the attacker's address will be in R15
---  then we write a jump-not-equals(jne r8, r15) which will return execution to the next instruction after the health subtraction instruction
---  (that now jumps to our code cave instead) which will be at 0x435d25.
---  then we write the subtraction instruction, but instead of using the damage stored in R12d, we subtract by 0xffff0000
---  (btw the victim/attackee address will be in r14 at this point in execution)
---  then we write a jump back to the next instruction after the health subtraction instruction(0x435d25).
---  this was the funniest feature to implement and also the one that taught me the most
--- TODO: disable damage when attacking a team mate
+{- our god-mode patch, this makes us the only ones able to deal damage(or to subtract a player's health, to be more precise)
+  this patches the health subtraction instruction(0x435d1c) to jump to our code cave at 0x53a951
+  inside our code cave, we store our localPlayer address on the R8 register with: movabs r8, 0x<player-heap-address>
+  then we write a compare(cmp) between R15 and R8, at this point in execution the attacker's address will be in R15
+  then we write a jump-not-equals(jne r8, r15) which will return execution to the next instruction after the health subtraction instruction
+  (that now jumps to our code cave instead) which will be at 0x435d25.
+  then we write the subtraction instruction, but instead of using the damage stored in R12d, we subtract by 0xffff0000
+  (btw the victim/attackee address will be in r14 at this point in execution)
+  then we write a jump back to the next instruction after the health subtraction instruction(0x435d25).
+  this was the funniest feature to implement and also the one that taught me the most
+ TODO: disable damage when attacking a team mate
+-}
 patchGodMode :: ProcessID -> Word -> Word -> IO ()
 patchGodMode pid gameModuleBase playerEntityPtr = do
   -- wirte near relative jmp 0xE9 to code cave from dmg subtract
@@ -197,12 +198,13 @@ patchGodMode pid gameModuleBase playerEntityPtr = do
   -- write jmp back to 435d25 to resume execution
   Mem.writeBytes pid ((gameModuleBase + Offsets.codeCave) + 0x1e) $ 0xe9 : Mem.wordToLittleEndian ((0x100000000 - (jumpOffsetAddr + 0x15)) - 0x5)
 
--- our actual hook for SDL_GL_SwapWindow implementatino that gets called by our C wrapper
---  on startup, it obtains the address for the SDL_GL_SwapWindow symbol from the loaded libraries
---  (libSDL2-2.0.so in this case) and stores it in IORef.
---  after it is loaded into its IORef, checks if patchClient has already been called (by checking isLoaded)
---  if it has already been patched/loaded then calls our hack funtions and then calls the original
---  SDL_GL_SwapWindow that we stored in IORef.
+{- our actual hook for SDL_GL_SwapWindow implementatino that gets called by our C wrapper
+  on startup, it obtains the address for the SDL_GL_SwapWindow symbol from the loaded libraries
+  (libSDL2-2.0.so in this case) and stores it in IORef.
+  after it is loaded into its IORef, checks if patchClient has already been called (by checking isLoaded)
+  if it has already been patched/loaded then calls our hack funtions and then calls the original
+  SDL_GL_SwapWindow that we stored in IORef.
+-}
 sdlGLSwapWindowHook :: Ptr () -> IO ()
 sdlGLSwapWindowHook windowPtr = do
   swapWindowR <- readIORef originalSwapWindowFuncRef
@@ -250,10 +252,11 @@ getLocalPlayer pid = do
         )
     Nothing -> error "Error trying to read the Player's entity address."
 
--- maps through the player list and loads all the players info into a list
---  only obtains alive players (state == 0)
---  also calculates the distance of each player/bot from our localPlayer
---  and also calls isvisible to set _visible on each player/bot
+{- maps through the player list and loads all the players info into a list
+  only obtains alive players (state == 0)
+  also calculates the distance of each player/bot from our localPlayer
+  and also calls isvisible to set _visible on each player/bot
+-}
 getPlayersList :: ProcessID -> (Float, Float, Float) -> IO [Player]
 getPlayersList pid playerPos@(playerX, playerY, playerZ) = do
   mMaxPlayers <- readIORef maxPlayersAddressRef >>= Mem.readInt32 pid
@@ -337,8 +340,9 @@ hack = do
   -- Aimbot
   readIORef aimbotRef >>= \active -> when active $ aimbot pid localPlayer playersList
 
--- reads the player ptr obtained by calling playerincrosshair and checks if the target player belongs to a different team
---  if true then calls dokill, otherwise do nothing
+{- reads the player ptr obtained by calling playerincrosshair and checks if the target player belongs to a different team
+   if true then calls dokill, otherwise do nothing
+-}
 sightKill :: Player -> IO ()
 sightKill localPlayer = do
   playerAimedAt <- readIORef playerInCrosshairPtrRef >>= peek
@@ -350,9 +354,9 @@ sightKill localPlayer = do
         readIORef playerInCrosshairPtrRef
           >>= \playerAimedAtPtr -> dokill dokillFunPtr playerAimedAtPtr (wordPtrToPtr $ WordPtr (_baseAddr localPlayer)) 1 0
 
--- maps the player list and updates the position of enemy players/bots to be equal to the players position with a 1 unit difference
 -- TODO: make bots appear on player's crosshair
 -- TODO: fix bug that makes player unable to hold down m1 to shoot automatically when this is enabled
+-- maps the player list and updates the position of enemy players/bots to be equal to the players position with a 1 unit difference
 magnet :: ProcessID -> Player -> [Player] -> IO [Player]
 magnet pid localPlayer players = do
   mapM
@@ -377,10 +381,11 @@ magnet pid localPlayer players = do
     )
     players
 
--- given the players list, gets which player is visible and closest to the player based on its _distance value,
---  then obtains the new aim coordinates to place the player's crosshair(aimX and aimY) onto the targets position
---  the calculation is not based on the player's current crosshair position(aimX and aimY), but instead in its own
---  position in the "world"(_pos -> 3d vector)
+{- given the players list, gets which player is visible and closest to the player based on its _distance value,
+  then obtains the new aim coordinates to place the player's crosshair(aimX and aimY) onto the targets position
+  the calculation is not based on the player's current crosshair position(aimX and aimY), but instead in its own
+  position in the "world"(_pos -> 3d vector)
+-}
 aimbot :: ProcessID -> Player -> [Player] -> IO ()
 aimbot pid localPlayer playersList = do
   -- get the closest visible enemy bot as the target
@@ -394,8 +399,9 @@ aimbot pid localPlayer playersList = do
         >>= \aimYAddress -> Mem.writeFloat pid aimYAddress newAimY
     Nothing -> return ()
 
--- reads the player ptr obtained by calling playerincrosshair and checks if the target player belongs to a different team
---  if true then shoots once, otherwise do nothing
+{- reads the player ptr obtained by calling playerincrosshair and checks if the target player belongs to a different team
+  if true then shoots once, otherwise do nothing
+  -}
 triggerBot :: Player -> IO ()
 triggerBot localPlayer = do
   aimedAtPlayer <- readIORef playerInCrosshairPtrRef >>= peek
@@ -404,13 +410,14 @@ triggerBot localPlayer = do
     _ <- forkIO $ do
       readIORef attackFunPtrRef >>= \attackFunPtr -> do
         attack attackFunPtr 1
-        threadDelay 1
+        threadDelay 1000
         attack attackFunPtr 0
     return ()
 
--- In the player entity list, each player address pointer is 0x10 bytes apart, but they have different starting points,
---  this is why we pass fstAddress and sndAddress, each starting point is 0x2 bytes apart from each other but both "step"
---  in 0x10 bytes, it's like if they where two separate lists with the same step but different starting points
+{- In the player entity list, each player address pointer is 0x10 bytes apart, but they have different starting points,
+  this is why we pass fstAddress and sndAddress, each starting point is 0x2 bytes apart from each other but both "step"
+  in 0x10 bytes, it's like if they where two separate lists with the same step but different starting points
+-}  
 botsPointers :: Word -> Word -> Int32 -> [Word]
 botsPointers fstAddress sndAddress maxPlayers =
   [fstAddress + (fromIntegral i * Offsets.nextBot) | i <- [0 .. ((maxPlayers `div` 2) - 1)]]
@@ -435,9 +442,10 @@ drawBox (posX, posY, footPosY) entColor = do
     vertex $ Vertex2 right posY
     vertex $ Vertex2 left posY
 
--- renders the ESP layer on the window with OpenGL
---  different from other tutorials I've found in the internet, we don't use the view matrix (I wasn't able to find it when debugging, embarassing)
---  that's why we pass the player's aimX and aimY values and calculate the worldToScreen of the players based on that(aimX and aimY)
+{- renders the ESP layer on the window with OpenGL
+  different from other tutorials I've found in the internet, we don't use the view matrix (I wasn't able to find it when debugging, embarassing)
+  that's why we pass the player's aimX and aimY values and calculate the worldToScreen of the players based on that(aimX and aimY)
+-}
 drawESP :: Player -> Float -> Float -> [Player] -> IO ()
 drawESP player aimX aimY bots =
   preservingMatrix $ do
