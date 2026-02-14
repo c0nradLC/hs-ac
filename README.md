@@ -1,6 +1,12 @@
 # hs-ac
 #### Internal game hack for Assault Cube v1.3.0.2 on linux.
 
+<p align="center">
+  <img alt="example usage of homodoro" src="./media/image.png">
+</p>
+
+[Watch a video](https://www.youtube.com/watch?v=JZsfmOnBGMs)
+
 This project is nothing but an experiment on learning the basics of reverse engineering and game hacking on linux, it is not intended to be commercialized in any way or used in the game's multiplayer matches.
 
 ## Cheats
