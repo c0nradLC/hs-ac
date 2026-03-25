@@ -1,4 +1,4 @@
-module Types (Player (..), ACPlayer (..), ACVec (..)) where
+module Types (Player (..), ACPlayer (..), ACVec (..), GuiState (..)) where
 
 import Foreign
   ( Storable (alignment, peek, peekByteOff, poke, pokeByteOff, sizeOf),
@@ -60,3 +60,7 @@ instance Storable ACVec where
     pokeByteOff ptr 0 (_x vec)
     pokeByteOff ptr 4 (_y vec)
     pokeByteOff ptr 8 (_z vec)
+
+data GuiState = GuiState
+  { _isVisible :: Bool
+  }

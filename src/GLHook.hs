@@ -1,6 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module GLHook where
 
@@ -10,6 +10,7 @@ import Data.IORef (readIORef, writeIORef)
 import Data.List (minimumBy)
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Ord (comparing)
+import Data.Text (Text, pack, split, toLower)
 import Foreign
   ( FunPtr,
     Int32,
@@ -26,27 +27,36 @@ import Foreign.C.Types (CBool (..), CInt (..))
 import GHC.Conc.IO (threadDelay)
 import Geom (deltas, getAngles, getDistance, worldToScreen)
 import Global
-  ( attackFunPtrRef,
+  ( aimbotRef,
+    attackFunPtrRef,
     dokillFunPtrRef,
+    espRef,
+    gameModeAddressRef,
+    godModeRef,
+    infiniteammoRef,
     isVisibleFunPtrRef,
     loadedRef,
+    magnetRef,
     maxPlayersAddressRef,
+    noattackphysicsRef,
     originalSwapWindowFuncRef,
     playerAimXAddressRef,
     playerAimYAddressRef,
     playerEntityPointerRef,
     playerInCrosshairFunPtrRef,
     playerInCrosshairPtrRef,
-    playerListPointerRef, magnetRef, sightKillRef, espRef, aimbotRef, triggerbotRef, infiniteammoRef, noattackphysicsRef, godModeRef, gameModeAddressRef,
+    playerListPointerRef,
+    sightKillRef,
+    triggerbotRef,
   )
-import Graphics.Rendering.OpenGL (BlendingFactor (OneMinusSrcAlpha, SrcAlpha), Capability (Enabled), Color (color), Color4 (Color4), ComparisonFunction (Always), HasGetter (get), HasSetter (($=)), MatrixMode (Projection), PrimitiveMode (LineLoop), Size (..), Vertex (vertex), Vertex2 (Vertex2), blend, blendFunc, depthFunc, lineWidth, loadIdentity, matrixMode, ortho, preservingMatrix, renderPrimitive, viewport)
+import Graphics.Rendering.OpenGL (BlendingFactor (OneMinusSrcAlpha, SrcAlpha), Capability (Enabled), Color (color), Color4 (Color4), ComparisonFunction (Always), HasGetter (get), MatrixMode (Projection), PrimitiveMode (LineLoop), Size (Size), Vertex (vertex), Vertex2 (Vertex2), blend, blendFunc, depthFunc, lineWidth, loadIdentity, matrixMode, ortho, preservingMatrix, renderPrimitive, viewport, ($=))
 import qualified Memory as Mem
 import qualified Offsets
+import System.Environment (lookupEnv)
 import System.Posix (ProcessID, RTLDFlags (RTLD_GLOBAL, RTLD_LAZY), dlopen, dlsym)
 import System.Posix.Process (getProcessID)
 import Types (ACPlayer (..), ACVec (..), Player (..))
-import System.Environment (lookupEnv)
-import Data.Text (split, pack, toLower, Text)
+import Window (drawGui, initDearImGuiWindow)
 
 -- Our SwapWindow hook
 foreign export ccall "sdlGLSwapWindowHook" sdlGLSwapWindowHook :: Ptr () -> IO ()
@@ -207,17 +217,21 @@ patchGodMode pid gameModuleBase playerEntityPtr = do
 -}
 sdlGLSwapWindowHook :: Ptr () -> IO ()
 sdlGLSwapWindowHook windowPtr = do
+  initDearImGuiWindow windowPtr
   swapWindowR <- readIORef originalSwapWindowFuncRef
   let originalSwapWindow = fromMaybe nullFunPtr swapWindowR
   if originalSwapWindow == nullFunPtr
     then do
-      dl <- dlopen "libSDL2-2.0.so" [RTLD_LAZY, RTLD_GLOBAL]
+      {- TODO: Fix this, should use fallbacks for lib name,
+      same lib in Arch didn't have the trailing ".0" -}
+      dl <- dlopen "libSDL2-2.0.so.0" [RTLD_LAZY, RTLD_GLOBAL]
       original_SwapWindow <- dlsym dl "SDL_GL_SwapWindow"
       unless (original_SwapWindow == nullFunPtr) $ do
         writeIORef originalSwapWindowFuncRef $ Just original_SwapWindow
     else do
       isLoaded <- readIORef loadedRef
       when isLoaded hack
+      drawGui
       callOriginalSwapWindow originalSwapWindow windowPtr
 
 -- loads all the info about our local player(player1)
@@ -235,8 +249,9 @@ getLocalPlayer pid = do
       -- from everyone else's so every other player gets to be an enemy
       isDeathMatch <- isDeathMatchGameMode . fromMaybe 99 <$> (readIORef gameModeAddressRef >>= Mem.readInt32 pid)
       playerTeam <-
-        if isDeathMatch then return 4 
-        else fromIntegral . fromMaybe 4 <$> Mem.readInt32 pid (playerEntityAddress + Offsets.playerTeam)
+        if isDeathMatch
+          then return 4
+          else fromIntegral . fromMaybe 4 <$> Mem.readInt32 pid (playerEntityAddress + Offsets.playerTeam)
 
       return
         ( Player
@@ -417,7 +432,7 @@ triggerBot localPlayer = do
 {- In the player entity list, each player address pointer is 0x10 bytes apart, but they have different starting points,
   this is why we pass fstAddress and sndAddress, each starting point is 0x2 bytes apart from each other but both "step"
   in 0x10 bytes, it's like if they where two separate lists with the same step but different starting points
--}  
+-}
 botsPointers :: Word -> Word -> Int32 -> [Word]
 botsPointers fstAddress sndAddress maxPlayers =
   [fstAddress + (fromIntegral i * Offsets.nextBot) | i <- [0 .. ((maxPlayers `div` 2) - 1)]]
@@ -472,6 +487,15 @@ drawESP player aimX aimY bots =
           drawBox (botScreenX, botScreenY, botFootScreenY) (boxColor player bot)
       )
       bots
+
+{- FTGL ttf test, do be worked on later
+drawSettings :: IO ()
+drawSettings = do
+  font <- createTextureFont "/usr/share/fonts/TTF/DejaVuSans.ttf"
+  _ <- setFontFaceSize font 24 72
+  renderFont font "Hello world!" Graphics.Rendering.FTGL.All
+  destroyFont font
+  -}
 
 -- the color of the ESP box for each player/bot
 boxColor :: Player -> Player -> Color4 Float

@@ -5,7 +5,7 @@ import Foreign (FunPtr, nullFunPtr, nullPtr)
 import Foreign.C (CBool, CInt)
 import Foreign.Ptr (Ptr)
 import GHC.IO (unsafePerformIO)
-import Types (ACPlayer, ACVec)
+import Types (ACPlayer, ACVec, GuiState)
 
 {-# NOINLINE playerEntityPointerRef #-}
 playerEntityPointerRef :: IORef Word
@@ -93,3 +93,7 @@ triggerbotRef = unsafePerformIO $ newIORef False
 {-# NOINLINE aimbotRef #-}
 aimbotRef :: IORef Bool
 aimbotRef = unsafePerformIO $ newIORef False
+
+{-# NOINLINE guiRef #-}
+guiRef :: IORef (Maybe GuiState)
+guiRef = unsafePerformIO $ newIORef Nothing
