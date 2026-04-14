@@ -33,6 +33,7 @@ import Global
     espRef,
     gameModeAddressRef,
     godModeRef,
+    guiRef,
     infiniteammoRef,
     isVisibleFunPtrRef,
     loadedRef,
@@ -55,7 +56,7 @@ import qualified Offsets
 import System.Environment (lookupEnv)
 import System.Posix (ProcessID, RTLDFlags (RTLD_GLOBAL, RTLD_LAZY), dlopen, dlsym)
 import System.Posix.Process (getProcessID)
-import Types (ACPlayer (..), ACVec (..), Player (..))
+import Types (ACPlayer (..), ACVec (..), ImGuiRefs (_isInitialized), Player (..))
 import Window (drawGui, initDearImGuiWindow)
 
 -- Our SwapWindow hook
@@ -95,21 +96,11 @@ parseHackModes modes = do
   writeIORef infiniteammoRef ("infiniteammo" `elem` modes)
   writeIORef noattackphysicsRef ("noattackphysics" `elem` modes)
   writeIORef godModeRef ("godmode" `elem` modes)
-  writeIORef magnetRef ("magnet" `elem` modes)
-  writeIORef triggerbotRef ("triggerbot" `elem` modes)
-  writeIORef aimbotRef ("aimbot" `elem` modes)
-  writeIORef espRef ("esp" `elem` modes)
-  writeIORef sightKillRef ("sight" `elem` modes)
 
   when ("all" `elem` modes || null modes) $ do
     writeIORef infiniteammoRef True
     writeIORef noattackphysicsRef True
     writeIORef godModeRef True
-    writeIORef magnetRef True
-    writeIORef triggerbotRef True
-    writeIORef aimbotRef True
-    writeIORef espRef True
-    writeIORef sightKillRef True
 
 -- loads all the refs (static addresses) and patches the binary, what's in here gets called only once on startup after 1 second
 patchClient :: IO ()
@@ -169,7 +160,6 @@ loadRefs pid gameModuleBaseAddr = do
   then we write the subtraction instruction, but instead of using the damage stored in R12d, we subtract by 0xffff0000
   (btw the victim/attackee address will be in r14 at this point in execution)
   then we write a jump back to the next instruction after the health subtraction instruction(0x435d25).
-  this was the funniest feature to implement and also the one that taught me the most
  TODO: disable damage when attacking a team mate
 -}
 patchGodMode :: ProcessID -> Word -> Word -> IO ()
@@ -217,7 +207,9 @@ patchGodMode pid gameModuleBase playerEntityPtr = do
 -}
 sdlGLSwapWindowHook :: Ptr () -> IO ()
 sdlGLSwapWindowHook windowPtr = do
-  initDearImGuiWindow windowPtr
+  guiRefs <- readIORef guiRef
+  isGuiInitialized <- readIORef $ _isInitialized guiRefs
+  unless isGuiInitialized $ initDearImGuiWindow guiRefs windowPtr
   swapWindowR <- readIORef originalSwapWindowFuncRef
   let originalSwapWindow = fromMaybe nullFunPtr swapWindowR
   if originalSwapWindow == nullFunPtr
@@ -229,9 +221,8 @@ sdlGLSwapWindowHook windowPtr = do
       unless (original_SwapWindow == nullFunPtr) $ do
         writeIORef originalSwapWindowFuncRef $ Just original_SwapWindow
     else do
-      isLoaded <- readIORef loadedRef
-      when isLoaded hack
-      drawGui
+      readIORef loadedRef >>= \isLoaded -> when isLoaded hack
+      readIORef (_isInitialized guiRefs) >>= \isInitialized -> when isInitialized $ drawGui guiRefs
       callOriginalSwapWindow originalSwapWindow windowPtr
 
 -- loads all the info about our local player(player1)

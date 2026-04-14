@@ -5,7 +5,7 @@ import Foreign (FunPtr, nullFunPtr, nullPtr)
 import Foreign.C (CBool, CInt)
 import Foreign.Ptr (Ptr)
 import GHC.IO (unsafePerformIO)
-import Types (ACPlayer, ACVec, GuiState)
+import Types (ACPlayer, ACVec, ImGuiRefs (ImGuiRefs, _isInitialized, _isVisible))
 
 {-# NOINLINE playerEntityPointerRef #-}
 playerEntityPointerRef :: IORef Word
@@ -95,5 +95,13 @@ aimbotRef :: IORef Bool
 aimbotRef = unsafePerformIO $ newIORef False
 
 {-# NOINLINE guiRef #-}
-guiRef :: IORef (Maybe GuiState)
-guiRef = unsafePerformIO $ newIORef Nothing
+guiRef :: IORef ImGuiRefs
+guiRef =
+  unsafePerformIO $ do
+    isInitialized <- newIORef False
+    isVisible <- newIORef False
+    newIORef
+      ImGuiRefs
+        { _isInitialized = isInitialized,
+          _isVisible = isVisible
+        }
