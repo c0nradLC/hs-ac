@@ -18,6 +18,8 @@ foreign-library hs-ac
                     , Global
                     , Geom
                     , Window
+                    , Cheat
+                    , External
     ghc-options: -Wall
     build-depends:
         base >=4.7 && <5
