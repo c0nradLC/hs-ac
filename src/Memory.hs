@@ -1,4 +1,4 @@
-module Memory (writeFloat, writeInt, writeWord32, writeVec3, writeBytes, readFloat, readMemoryValue, readInt32, readVec3, readAddress, wordToLittleEndian, getGameModuleBaseAddr, Module (..)) where
+module Memory (writeFloat, writeInt, writeWord32, writeVec3, writeBytes, readFloat, readBytes, readMemoryValue, readInt32, readVec3, readAddress, wordToLittleEndian, getGameModuleBaseAddr, Module (..)) where
 
 import Data.Bits (Bits (shiftR, (.&.)), FiniteBits (finiteBitSize))
 import qualified Data.ByteString as BS
@@ -60,6 +60,26 @@ writeVec3 pid addr (x, y, z) = do
   writeFloat pid (addr + 4) y
   writeFloat pid (addr + 8) z
 
+readBytes :: ProcessID -> Word -> Int -> IO [Word8]
+readBytes pid addr size = do
+  let memPath = "/proc/" ++ show pid ++ "/mem"
+  mbBytes <-
+    withBinaryFile
+      memPath
+      ReadMode
+      ( \handle -> do
+          hSeek handle AbsoluteSeek (fromIntegral addr)
+          content <- BS.hGet handle size
+          hClose handle
+          return $
+            if BS.length content == size
+              then Just content
+              else Nothing
+      )
+  case mbBytes of
+    Just bytes -> return $ BS.unpack bytes
+    Nothing -> return []
+
 -- Read a specific type from memory
 readMemoryValue :: (Storable a) => ProcessID -> Word -> IO (Maybe a)
 readMemoryValue pid address = do
@@ -112,17 +132,9 @@ readVec3 pid addr = do
     (Just x, Just y, Just z) -> return $ Just (x, y, z)
     _ -> return Nothing
 
-wordToLittleEndian :: (FiniteBits a, Integral a) => a -> [Word8]
-wordToLittleEndian w =
-  unfoldr go 0
-  where
-    totalBytes = finiteBitSize w `div` 8
-    go i
-      | i < totalBytes =
-          let shiftAmount = i * 8
-              byte = fromIntegral $ (w `shiftR` shiftAmount) .&. 0xFF
-           in Just (byte, i + 1)
-      | otherwise = Nothing
+wordToLittleEndian :: (Integral a, FiniteBits a) => a -> Int -> [Word8]
+wordToLittleEndian w n =
+  [fromIntegral ((w `shiftR` (i * 8)) .&. 0xFF) | i <- [0 .. n - 1]]
 
 getGameModuleBaseAddr :: FilePath -> IO Word
 getGameModuleBaseAddr fp = do
