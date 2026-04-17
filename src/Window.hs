@@ -3,20 +3,22 @@
 
 module Window (initDearImGuiWindow, drawGui) where
 
-import Control.Monad (when)
-import qualified Control.Monad as Monad
-import Data.IORef (newIORef, readIORef, writeIORef)
+import Cheat (patchGodMode)
+import Control.Monad (liftM, liftM2, void, when)
+import Data.IORef (atomicWriteIORef, newIORef, readIORef, writeIORef)
 import DearImGui
 import DearImGui.OpenGL3
-import DearImGui.Raw.DrawList (addCircle, addCircleFilled)
+import DearImGui.Raw.DrawList (addCircleFilled)
 import DearImGui.SDL (pollEventWithImGui, pollEventsWithImGui, sdl2NewFrame)
 import DearImGui.SDL.OpenGL
-import Foreign (Ptr, Storable (peek, poke), alloca, malloc, nullPtr)
-import Global (aimbotRef, espRef, godModeRef, infiniteammoRef, magnetRef, noattackphysicsRef, sightKillRef, triggerbotRef)
+import Foreign (Bits (xor), Ptr, Storable (peek, poke), alloca, nullPtr)
+import Global (aimbotRef, espRef, godModePatchedRef, godModeRef, infiniteammoPatchedRef, infiniteammoRef, magnetRef, noattackphysicsPatchedRef, noattackphysicsRef, originalDmgSubtractBytesRef, originalInfiniteAmmoBytesRef, originalNoattackphysicsBytesRef, sightKillRef, triggerbotRef)
+import qualified Memory as Mem
+import qualified Offsets
 import SDL
-import SDL.Raw (showCursor)
 import qualified SDL.Raw as SDLRaw
 import SDL.Raw.Video (glGetCurrentContext)
+import System.Posix (getProcessID)
 import Types (ImGuiRefs (_isInitialized, _isVisible))
 import Unsafe.Coerce (unsafeCoerce)
 
@@ -50,7 +52,7 @@ drawGui guiRefs =
       then do
         unlessQuit guiRefs $ do
           -- TODO: find a better way of making the events exclusive to dear-imgui
-          Monad.void pollEventsWithImGui
+          _ <- pollEventsWithImGui
 
           openGL3NewFrame
           sdl2NewFrame
@@ -60,6 +62,9 @@ drawGui guiRefs =
           windowSizeRef <- newIORef $ ImVec2 300 200
           setNextWindowSize windowSizeRef (ImGuiCond 0)
 
+          pid <- getProcessID
+          gameModuleBaseAddr <- Mem.getGameModuleBaseAddr $ "/proc/" ++ show pid ++ "/maps"
+
           -- actual cheat window
           withCloseableWindow "hackiddi hack" (_isVisible guiRefs) $ do
             text "dafuq is this on my screen!"
@@ -68,9 +73,27 @@ drawGui guiRefs =
             _ <- checkbox "Aimbot" aimbotRef
             _ <- checkbox "ESP" espRef
             _ <- checkbox "Sight-kill" sightKillRef
-            _ <- checkbox "Infinite ammo" infiniteammoRef
-            _ <- checkbox "No attack physics" noattackphysicsRef
-            _ <- checkbox "God mode" godModeRef
+            checkbox "Infinite ammo" infiniteammoRef >>= \changed -> when changed $ do
+              enabled <- readIORef infiniteammoRef
+              patched <- readIORef infiniteammoPatchedRef
+              if enabled && not patched
+                then do
+                  Mem.writeBytes pid (gameModuleBaseAddr + Offsets.consumeAmmoInstr) (replicate 3 0x90) >> writeIORef infiniteammoPatchedRef True
+                else readIORef originalInfiniteAmmoBytesRef >>= Mem.writeBytes pid (gameModuleBaseAddr + Offsets.consumeAmmoInstr) >> writeIORef infiniteammoPatchedRef False
+            checkbox "No attack physics" noattackphysicsRef >>= \changed -> when changed $ do
+              enabled <- readIORef noattackphysicsRef
+              patched <- readIORef noattackphysicsPatchedRef
+              if enabled && not patched
+                then do
+                  Mem.writeBytes pid (gameModuleBaseAddr + Offsets.attackPhysicsFunction) [0xc3] >> writeIORef noattackphysicsPatchedRef True
+                else readIORef originalNoattackphysicsBytesRef >>= Mem.writeBytes pid (gameModuleBaseAddr + Offsets.attackPhysicsFunction) >> writeIORef noattackphysicsPatchedRef False
+            checkbox "God mode" godModeRef >>= \changed -> when changed $ do
+              enabled <- readIORef godModeRef
+              patched <- readIORef godModePatchedRef
+              if enabled && not patched
+                then do
+                  writeIORef godModePatchedRef True >> patchGodMode pid gameModuleBaseAddr (gameModuleBaseAddr + Offsets.playerEntityPointer)
+                else writeIORef godModePatchedRef False >> readIORef originalDmgSubtractBytesRef >>= Mem.writeBytes pid (gameModuleBaseAddr + Offsets.dmgSubtract)
 
             drawList <- getForegroundDrawList
             mousePosPtr <- alloca $ \ptr -> do
@@ -98,9 +121,9 @@ gotOpenEvent guiRefs = do
           if SDLRaw.keysymKeycode kev == SDLRaw.SDLK_INSERT
             then do
               writeIORef (_isVisible guiRefs) True
-            else Monad.void $ SDLRaw.pushEvent eventPtr
+            else void $ SDLRaw.pushEvent eventPtr
         -- push the event back to the head of the event queue so AC can handle it
-        _ -> Monad.void $ SDLRaw.pushEvent eventPtr
+        _ -> void $ SDLRaw.pushEvent eventPtr
 
 unlessQuit :: ImGuiRefs -> IO () -> IO ()
 unlessQuit guiRefs action = do
