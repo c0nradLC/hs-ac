@@ -1,8 +1,8 @@
 module Memory (writeFloat, writeInt, writeWord32, writeVec3, writeBytes, readFloat, readBytes, readMemoryValue, readInt32, readVec3, readAddress, wordToLittleEndian, getGameModuleBaseAddr, Module (..)) where
 
-import Data.Bits (Bits (shiftR, (.&.)), FiniteBits (finiteBitSize))
+import Data.Bits (Bits (shiftR, (.&.)), FiniteBits)
 import qualified Data.ByteString as BS
-import Data.List (find, isInfixOf, unfoldr)
+import Data.List (find, isInfixOf)
 import Data.Text (pack, split, unpack)
 import Data.Word (Word32, Word8)
 import Foreign

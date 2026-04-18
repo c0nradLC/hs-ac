@@ -6,7 +6,16 @@ import Foreign.C (CBool, CInt)
 import Foreign.Ptr (Ptr)
 import GHC.IO (unsafePerformIO)
 import GHC.Word (Word8 (..))
+import System.Posix (ProcessID)
 import Types (ACPlayer, ACVec, ImGuiRefs (ImGuiRefs, _isInitialized, _isVisible))
+
+{-# NOINLINE pidRef #-}
+pidRef :: IORef ProcessID
+pidRef = unsafePerformIO $ newIORef 0
+
+{-# NOINLINE gameModuleBaseAddrRef #-}
+gameModuleBaseAddrRef :: IORef Word
+gameModuleBaseAddrRef = unsafePerformIO $ newIORef 0x0
 
 {-# NOINLINE playerEntityPointerRef #-}
 playerEntityPointerRef :: IORef Word

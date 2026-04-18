@@ -3,22 +3,21 @@
 
 module Window (initDearImGuiWindow, drawGui) where
 
-import Cheat (patchGodMode)
-import Control.Monad (liftM, liftM2, void, when)
-import Data.IORef (atomicWriteIORef, newIORef, readIORef, writeIORef)
+import Cheat (patchGodMode, patchInfiniteAmmo, patchNoAttackPhysics)
+import Control.Monad (liftM2, void, when)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import DearImGui
 import DearImGui.OpenGL3
 import DearImGui.Raw.DrawList (addCircleFilled)
 import DearImGui.SDL (pollEventWithImGui, pollEventsWithImGui, sdl2NewFrame)
 import DearImGui.SDL.OpenGL
-import Foreign (Bits (xor), Ptr, Storable (peek, poke), alloca, nullPtr)
-import Global (aimbotRef, espRef, godModePatchedRef, godModeRef, infiniteammoPatchedRef, infiniteammoRef, magnetRef, noattackphysicsPatchedRef, noattackphysicsRef, originalDmgSubtractBytesRef, originalInfiniteAmmoBytesRef, originalNoattackphysicsBytesRef, sightKillRef, triggerbotRef)
-import qualified Memory as Mem
+import Foreign (Ptr, Storable (peek, poke), alloca, nullPtr)
+import Global (aimbotRef, espRef, godModePatchedRef, godModeRef, infiniteammoPatchedRef, infiniteammoRef, magnetRef, noattackphysicsPatchedRef, noattackphysicsRef, sightKillRef, triggerbotRef)
 import qualified Offsets
 import SDL
 import qualified SDL.Raw as SDLRaw
 import SDL.Raw.Video (glGetCurrentContext)
-import System.Posix (getProcessID)
+import System.Posix (ProcessID)
 import Types (ImGuiRefs (_isInitialized, _isVisible))
 import Unsafe.Coerce (unsafeCoerce)
 
@@ -45,8 +44,8 @@ initDearImGuiWindow guiRefs windowPtr = do
 {- actual logic for our cheat window, if it's closed then check for SDLK_INSERT key event/press
   otherwise draw the window and check for SDLK_ESCAPE key event/press
 -}
-drawGui :: ImGuiRefs -> IO ()
-drawGui guiRefs =
+drawGui :: ImGuiRefs -> ProcessID -> Word -> IO ()
+drawGui guiRefs pid gameModuleBaseAddr =
   readIORef (_isVisible guiRefs) >>= \isVisible ->
     if isVisible
       then do
@@ -62,9 +61,6 @@ drawGui guiRefs =
           windowSizeRef <- newIORef $ ImVec2 300 200
           setNextWindowSize windowSizeRef (ImGuiCond 0)
 
-          pid <- getProcessID
-          gameModuleBaseAddr <- Mem.getGameModuleBaseAddr $ "/proc/" ++ show pid ++ "/maps"
-
           -- actual cheat window
           withCloseableWindow "hackiddi hack" (_isVisible guiRefs) $ do
             text "dafuq is this on my screen!"
@@ -74,26 +70,18 @@ drawGui guiRefs =
             _ <- checkbox "ESP" espRef
             _ <- checkbox "Sight-kill" sightKillRef
             checkbox "Infinite ammo" infiniteammoRef >>= \changed -> when changed $ do
-              enabled <- readIORef infiniteammoRef
-              patched <- readIORef infiniteammoPatchedRef
-              if enabled && not patched
-                then do
-                  Mem.writeBytes pid (gameModuleBaseAddr + Offsets.consumeAmmoInstr) (replicate 3 0x90) >> writeIORef infiniteammoPatchedRef True
-                else readIORef originalInfiniteAmmoBytesRef >>= Mem.writeBytes pid (gameModuleBaseAddr + Offsets.consumeAmmoInstr) >> writeIORef infiniteammoPatchedRef False
+              shouldPatch <- liftM2 (&&) (readIORef infiniteammoRef) (not <$> readIORef infiniteammoPatchedRef)
+              patchInfiniteAmmo shouldPatch pid gameModuleBaseAddr
             checkbox "No attack physics" noattackphysicsRef >>= \changed -> when changed $ do
-              enabled <- readIORef noattackphysicsRef
-              patched <- readIORef noattackphysicsPatchedRef
-              if enabled && not patched
-                then do
-                  Mem.writeBytes pid (gameModuleBaseAddr + Offsets.attackPhysicsFunction) [0xc3] >> writeIORef noattackphysicsPatchedRef True
-                else readIORef originalNoattackphysicsBytesRef >>= Mem.writeBytes pid (gameModuleBaseAddr + Offsets.attackPhysicsFunction) >> writeIORef noattackphysicsPatchedRef False
+              shouldPatch <- liftM2 (&&) (readIORef noattackphysicsRef) (not <$> readIORef noattackphysicsPatchedRef)
+              patchNoAttackPhysics shouldPatch pid gameModuleBaseAddr
             checkbox "God mode" godModeRef >>= \changed -> when changed $ do
-              enabled <- readIORef godModeRef
-              patched <- readIORef godModePatchedRef
-              if enabled && not patched
-                then do
-                  writeIORef godModePatchedRef True >> patchGodMode pid gameModuleBaseAddr (gameModuleBaseAddr + Offsets.playerEntityPointer)
-                else writeIORef godModePatchedRef False >> readIORef originalDmgSubtractBytesRef >>= Mem.writeBytes pid (gameModuleBaseAddr + Offsets.dmgSubtract)
+              shouldPatch <- liftM2 (&&) (readIORef godModeRef) (not <$> readIORef godModePatchedRef)
+              patchGodMode
+                shouldPatch
+                pid
+                gameModuleBaseAddr
+                (gameModuleBaseAddr + Offsets.playerEntityPointer)
 
             drawList <- getForegroundDrawList
             mousePosPtr <- alloca $ \ptr -> do
