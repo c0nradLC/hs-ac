@@ -191,7 +191,6 @@ sightKill localPlayer = do
         readIORef playerInCrosshairPtrRef
           >>= \playerAimedAtPtr -> dokill dokillFunPtr playerAimedAtPtr (wordPtrToPtr $ WordPtr (_baseAddr localPlayer)) 1 0
 
--- TODO: make bots appear on player's crosshair
 -- TODO: fix bug that makes player unable to hold down m1 to shoot automatically when this is enabled
 -- maps the player list and updates the position of enemy players/bots to be equal to the players position with a 1 unit difference
 magnet :: ProcessID -> Player -> [Player] -> IO [Player]
@@ -202,11 +201,12 @@ magnet pid localPlayer players = do
           then return bot
           else do
             let (playerX, playerY, playerZ) = _pos localPlayer
-                newPos = (playerX + 1, playerY + 1, playerZ)
-            Mem.writeVec3 pid (_baseAddr bot + Offsets.playerPos) newPos
+                (newPosX, newPosY, newPosZ) = (playerX + 2, playerY + 2, playerZ)
+            Mem.writeVec3 pid (_baseAddr bot + Offsets.playerPos) (newPosX, newPosY, newPosZ)
+            Mem.writeVec3 pid (_baseAddr bot + Offsets.playerVisualPos) (newPosX, newPosY, 0)
             return
               Player
-                { _pos = newPos,
+                { _pos = (newPosX, newPosY, newPosZ),
                   _team = _team bot,
                   _state = _state bot,
                   _distance = _distance bot,

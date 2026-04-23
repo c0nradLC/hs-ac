@@ -33,6 +33,9 @@ playerHealth = 0x100
 playerPos :: Word
 playerPos = 0x8
 
+playerVisualPos :: Word
+playerVisualPos = 0x2c
+
 playerAimY :: Word
 playerAimY = 0x3c
 
