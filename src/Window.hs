@@ -39,6 +39,8 @@ initDearImGuiWindow guiRefs windowPtr = do
   _ <- createContext
   _ <- sdl2InitForOpenGL (windowPtrToWindow windowPtr) (glToContext glCtx)
   _ <- openGL3Init
+  windowSizeRef <- newIORef $ ImVec2 300 200
+  setNextWindowSize windowSizeRef (ImGuiCond 0)
   writeIORef (_isInitialized guiRefs) True
 
 {- actual logic for our cheat window, if it's closed then check for SDLK_INSERT key event/press
@@ -56,10 +58,6 @@ drawGui guiRefs pid gameModuleBaseAddr =
           openGL3NewFrame
           sdl2NewFrame
           newFrame
-
-          -- window size
-          windowSizeRef <- newIORef $ ImVec2 300 200
-          setNextWindowSize windowSizeRef (ImGuiCond 0)
 
           -- actual cheat window
           withCloseableWindow "hackiddi hack" (_isVisible guiRefs) $ do

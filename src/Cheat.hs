@@ -234,7 +234,7 @@ aimbot pid localPlayer playersList = do
         >>= \aimXAddress -> Mem.writeFloat pid aimXAddress newAimX
       readIORef playerAimYAddressRef
         >>= \aimYAddress -> Mem.writeFloat pid aimYAddress newAimY
-    Nothing -> return ()
+    Nothing -> return () 
 
 {- reads the player ptr obtained by calling playerincrosshair and checks if the target player belongs to a different team
   if true then shoots once, otherwise do nothing
