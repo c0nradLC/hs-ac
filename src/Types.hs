@@ -1,5 +1,6 @@
-module Types (Player (..), ACPlayer (..), ACVec (..)) where
+module Types (Player (..), ACPlayer (..), ACVec (..), ImGuiRefs (..)) where
 
+import Data.IORef (IORef)
 import Foreign
   ( Storable (alignment, peek, peekByteOff, poke, pokeByteOff, sizeOf),
     nullPtr,
@@ -60,3 +61,8 @@ instance Storable ACVec where
     pokeByteOff ptr 0 (_x vec)
     pokeByteOff ptr 4 (_y vec)
     pokeByteOff ptr 8 (_z vec)
+
+data ImGuiRefs = ImGuiRefs
+  { _isInitialized :: IORef Bool,
+    _isVisible :: IORef Bool
+  }

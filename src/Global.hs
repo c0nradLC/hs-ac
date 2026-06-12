@@ -5,7 +5,17 @@ import Foreign (FunPtr, nullFunPtr, nullPtr)
 import Foreign.C (CBool, CInt)
 import Foreign.Ptr (Ptr)
 import GHC.IO (unsafePerformIO)
-import Types (ACPlayer, ACVec)
+import GHC.Word (Word8 (..))
+import System.Posix (ProcessID)
+import Types (ACPlayer, ACVec, ImGuiRefs (ImGuiRefs, _isInitialized, _isVisible))
+
+{-# NOINLINE pidRef #-}
+pidRef :: IORef ProcessID
+pidRef = unsafePerformIO $ newIORef 0
+
+{-# NOINLINE gameModuleBaseAddrRef #-}
+gameModuleBaseAddrRef :: IORef Word
+gameModuleBaseAddrRef = unsafePerformIO $ newIORef 0x0
 
 {-# NOINLINE playerEntityPointerRef #-}
 playerEntityPointerRef :: IORef Word
@@ -62,17 +72,41 @@ originalSwapWindowFuncRef = unsafePerformIO $ newIORef Nothing
 
 -- all the hack features/modes
 
+{-# NOINLINE originalInfiniteAmmoBytesRef #-}
+originalInfiniteAmmoBytesRef :: IORef [Word8]
+originalInfiniteAmmoBytesRef = unsafePerformIO $ newIORef []
+
 {-# NOINLINE infiniteammoRef #-}
 infiniteammoRef :: IORef Bool
 infiniteammoRef = unsafePerformIO $ newIORef False
+
+{-# NOINLINE infiniteammoPatchedRef #-}
+infiniteammoPatchedRef :: IORef Bool
+infiniteammoPatchedRef = unsafePerformIO $ newIORef False
+
+{-# NOINLINE originalNoattackphysicsBytesRef #-}
+originalNoattackphysicsBytesRef :: IORef [Word8]
+originalNoattackphysicsBytesRef = unsafePerformIO $ newIORef []
 
 {-# NOINLINE noattackphysicsRef #-}
 noattackphysicsRef :: IORef Bool
 noattackphysicsRef = unsafePerformIO $ newIORef False
 
+{-# NOINLINE noattackphysicsPatchedRef #-}
+noattackphysicsPatchedRef :: IORef Bool
+noattackphysicsPatchedRef = unsafePerformIO $ newIORef False
+
+{-# NOINLINE originalDmgSubtractBytesRef #-}
+originalDmgSubtractBytesRef :: IORef [Word8]
+originalDmgSubtractBytesRef = unsafePerformIO $ newIORef []
+
 {-# NOINLINE godModeRef #-}
 godModeRef :: IORef Bool
 godModeRef = unsafePerformIO $ newIORef False
+
+{-# NOINLINE godModePatchedRef #-}
+godModePatchedRef :: IORef Bool
+godModePatchedRef = unsafePerformIO $ newIORef False
 
 {-# NOINLINE magnetRef #-}
 magnetRef :: IORef Bool
@@ -93,3 +127,15 @@ triggerbotRef = unsafePerformIO $ newIORef False
 {-# NOINLINE aimbotRef #-}
 aimbotRef :: IORef Bool
 aimbotRef = unsafePerformIO $ newIORef False
+
+{-# NOINLINE guiRef #-}
+guiRef :: IORef ImGuiRefs
+guiRef =
+  unsafePerformIO $ do
+    isInitialized <- newIORef False
+    isVisible <- newIORef False
+    newIORef
+      ImGuiRefs
+        { _isInitialized = isInitialized,
+          _isVisible = isVisible
+        }
